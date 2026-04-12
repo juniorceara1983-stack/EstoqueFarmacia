@@ -357,9 +357,12 @@ function detectAndParseRows(allRows) {
 
 /**
  * Parses a Nota Fiscal file.
- * Extracts the Descrição column (medicine name) and the QTD. column (quantity).
+ * Extracts the Código column (product code), Descrição column (medicine name)
+ * and the QTD. column (quantity). The code is prepended to the name so that
+ * medicines with the same name but different codes can be distinguished.
  */
 function parseNFRows(allRows, headerIdx, header) {
+  const codeIdx = header.findIndex((h) => /C[ÓO]DIGO/i.test(h));
   const descIdx = header.findIndex((h) => /DESCRI/i.test(h));
   const qtdIdx  = header.findIndex((h) => /^QTD\.?$/i.test(h.trim()));
 
@@ -370,10 +373,11 @@ function parseNFRows(allRows, headerIdx, header) {
   const rows = [];
   for (let i = headerIdx + 1; i < allRows.length; i++) {
     const cells = allRows[i].map((c) => String(c == null ? '' : c).trim());
+    const code  = codeIdx >= 0 ? (cells[codeIdx] || '') : '';
     const nome  = cells[descIdx] || '';
     const qtd   = parseFloat((cells[qtdIdx] || '').replace(',', '.'));
     if (!nome || isNaN(qtd) || qtd <= 0) continue;
-    rows.push([nome, qtd]);
+    rows.push([code ? `${code} – ${nome}` : nome, qtd]);
   }
   return { format: 'nf', rows };
 }
@@ -414,8 +418,9 @@ function parseRedeRows(allRows, headerIdx, header) {
     const estoq = parseFloat((cells[estoqIdx] || '0').replace(',', '.')) || 0;
     const vend  = parseFloat((cells[vendIdx]  || '0').replace(',', '.')) || 0;
 
-    estoqueRows.push([nome, estoq]);
-    vendasRows.push([nome, vend]);
+    const nomeComCodigo = `${code} – ${nome}`;
+    estoqueRows.push([nomeComCodigo, estoq]);
+    vendasRows.push([nomeComCodigo, vend]);
   }
 
   return { format: 'rede', estoqueRows, vendasRows };
@@ -426,6 +431,8 @@ function parseRedeRows(allRows, headerIdx, header) {
  * When the original XLS (with merged cells) is saved as CSV, each merged column
  * gains an extra empty padding column, shifting data positions:
  *   col[1] = Código, col[3] = Descrição, col[12] = QTD.
+ * The product code is prepended to the name to help distinguish medicines that
+ * share the same description.
  */
 function parseDrogamaisEstoqueRows(allRows, headerIdx) {
   const rows = [];
@@ -435,7 +442,7 @@ function parseDrogamaisEstoqueRows(allRows, headerIdx) {
     const nome  = cells[3] || '';
     const qtd   = parseFloat((cells[12] || '').replace(',', '.'));
     if (!nome || !code || isNaN(qtd) || qtd <= 0 || isNaN(parseInt(code, 10))) continue;
-    rows.push([nome, qtd]);
+    rows.push([`${code} – ${nome}`, qtd]);
   }
   return { format: 'nf', rows };
 }
@@ -489,8 +496,9 @@ function parseSugestaoRows(allRows) {
     const saldo   = parseFloat((cells[9]  || '0').replace(',', '.')) || 0;
     const qtdVend = parseFloat((cells[13] || '0').replace(',', '.')) || 0;
 
-    estoqueRows.push([nome, Math.max(0, saldo)]); // clamp negative stock to 0
-    vendasRows.push([nome, qtdVend]);
+    const nomeComCodigo = `${code} – ${nome}`;
+    estoqueRows.push([nomeComCodigo, Math.max(0, saldo)]); // clamp negative stock to 0
+    vendasRows.push([nomeComCodigo, qtdVend]);
   }
 
   return { format: 'sugestao', estoqueRows, vendasRows, periodoDias };
@@ -594,28 +602,22 @@ function renderResultado(data) {
 
 /* ── PDF download helper (cross-device) ──────────────────────────────────── */
 /**
- * Downloads a jsPDF document as a file.
- * Sets both `download` (honoured by desktop browsers) and `target="_blank"`
- * (honoured by iOS Safari, which ignores `download` for blob URLs) so the
- * PDF is always accessible without navigating away from the page.
+ * Saves a jsPDF document.
+ * Uses jsPDF's built-in save() which handles cross-platform differences
+ * (desktop download vs. iOS new-tab).
  */
 function downloadPdf(doc, filename) {
-  const blob = doc.output('blob');
-  const url  = URL.createObjectURL(blob);
-  const a    = document.createElement('a');
-  a.href     = url;
-  a.download = filename;
-  a.target   = '_blank';
-  a.rel      = 'noopener';
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  setTimeout(() => URL.revokeObjectURL(url), 500); // brief delay lets the browser start loading before the URL is revoked
+  doc.save(filename);
 }
 
 /* ── PDF export ──────────────────────────────────────────────────────────── */
 function exportarPdf() {
   if (!state.resultado) return;
+  if (typeof window.jspdf === 'undefined' || typeof window.jspdf.jsPDF === 'undefined') {
+    showToast('Biblioteca de PDF não carregou. Verifique sua conexão e recarregue a página.', 'error');
+    return;
+  }
+  try {
   const { jsPDF } = window.jspdf;
   const doc  = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
   const data = state.resultado;
@@ -637,8 +639,8 @@ function exportarPdf() {
   // Table
   doc.setTextColor(0, 0, 0);
   doc.setFontSize(8);
-  const cols   = ['#', 'Medicamento', 'Estoque', 'Média/dia', 'Projeção', 'Comprar'];
-  const widths = [8, 85, 18, 22, 22, 22];
+  const cols   = ['#', 'Cód. / Medicamento', 'Estoque', 'Média/dia', 'Projeção', 'Comprar'];
+  const widths = [8, 90, 18, 22, 22, 17];
   let y = 36;
 
   // Column headers
@@ -666,7 +668,7 @@ function exportarPdf() {
     x = 14;
     const row = [
       String(idx + 1),
-      item.medicamento.length > 45 ? item.medicamento.substring(0, 43) + '…' : item.medicamento,
+      item.medicamento.length > 48 ? item.medicamento.substring(0, 46) + '…' : item.medicamento,
       String(item.estoqueAtual),
       item.mediaDiaria.toFixed(2),
       item.projecao.toFixed(1),
@@ -688,6 +690,9 @@ function exportarPdf() {
 
   downloadPdf(doc, `lista-compras-${data.diasCobertura}dias-${hoje.replace(/\//g, '-')}.pdf`);
   showToast('PDF gerado com sucesso!', 'success');
+  } catch (err) {
+    showToast(`Erro ao gerar PDF: ${err.message}`, 'error');
+  }
 }
 
 /* ── WhatsApp share ──────────────────────────────────────────────────────── */
@@ -756,6 +761,11 @@ function renderRelatorio(data) {
 
 function exportarRelatorioPdf() {
   if (!state.relatorio) return;
+  if (typeof window.jspdf === 'undefined' || typeof window.jspdf.jsPDF === 'undefined') {
+    showToast('Biblioteca de PDF não carregou. Verifique sua conexão e recarregue a página.', 'error');
+    return;
+  }
+  try {
   const { jsPDF } = window.jspdf;
   const doc  = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
   const data = state.relatorio;
@@ -778,8 +788,8 @@ function exportarRelatorioPdf() {
   // Table
   doc.setTextColor(0, 0, 0);
   doc.setFontSize(8);
-  const cols   = ['#', 'Medicamento', 'Total Vendido', 'Média Diária'];
-  const widths = [10, 105, 38, 38];
+  const cols   = ['#', 'Cód. / Medicamento', 'Total Vendido', 'Média Diária'];
+  const widths = [10, 110, 35, 35];
   let y = 36;
 
   doc.setFont('helvetica', 'bold');
@@ -799,7 +809,7 @@ function exportarRelatorioPdf() {
     x = 14;
     const row = [
       String(idx + 1) + 'º',
-      item.medicamento.length > 55 ? item.medicamento.substring(0, 53) + '…' : item.medicamento,
+      item.medicamento.length > 60 ? item.medicamento.substring(0, 58) + '…' : item.medicamento,
       String(item.totalVendido),
       item.mediaDiaria.toFixed(2) + '/dia',
     ];
@@ -818,6 +828,9 @@ function exportarRelatorioPdf() {
 
   downloadPdf(doc, `relatorio-mais-vendidos-${label.toLowerCase().replace(/ /g, '')}-${hoje.replace(/\//g, '-')}.pdf`);
   showToast('PDF do relatório gerado!', 'success');
+  } catch (err) {
+    showToast(`Erro ao gerar PDF: ${err.message}`, 'error');
+  }
 }
 
 /* ── HTTP helpers ────────────────────────────────────────────────────────── */
