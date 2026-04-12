@@ -18,6 +18,9 @@ const state = {
   vendasCarregadas: false,
   resultado: null,
   relatorio: null,
+  validadeDias: 60,
+  validadeItens: null,
+  validadeResultado: null,
 };
 
 /* ── DOM refs ────────────────────────────────────────────────────────────── */
@@ -27,29 +30,33 @@ const $ = (id) => document.getElementById(id);
 document.addEventListener('DOMContentLoaded', () => {
   setupPeriodButtons();
   setupTopButtons();
+  setupValidadePeriodButtons();
   setupDropzone('estoqueDropzone', 'estoqueCsvInput', 'estoqueProgress',
                 'estoqueStatus', 'Estoque', false);
   setupDropzone('vendasDropzone', 'vendasCsvInput', 'vendasProgress',
                 'vendasStatus', 'Vendas', true);
+  setupValidadeDropzone();
   $('btnCalcular').addEventListener('click', calcular);
   $('btnPdf').addEventListener('click', exportarPdf);
   $('btnWhatsapp').addEventListener('click', compartilharWhatsapp);
   $('btnRelatorio').addEventListener('click', gerarRelatorio);
   $('btnRelatorioPdf').addEventListener('click', exportarRelatorioPdf);
+  $('btnValidadePdf').addEventListener('click', exportarValidadePdf);
   updateCalcularBtn();
 });
 
 /* ── Period selector ────────────────────────────────────────────────────── */
 function setupPeriodButtons() {
-  document.querySelectorAll('.period-btn[data-dias]').forEach((btn) => {
+  // Only select the main coverage-period buttons (not validade period buttons)
+  document.querySelectorAll('.period-btn[data-dias]:not(.vld-btn)').forEach((btn) => {
     btn.addEventListener('click', () => {
-      document.querySelectorAll('.period-btn[data-dias]').forEach((b) => b.classList.remove('active'));
+      document.querySelectorAll('.period-btn[data-dias]:not(.vld-btn)').forEach((b) => b.classList.remove('active'));
       btn.classList.add('active');
       state.periodoSelecionado = parseInt(btn.dataset.dias, 10);
     });
   });
   // Default active
-  document.querySelector('.period-btn[data-dias="14"]').classList.add('active');
+  document.querySelector('.period-btn[data-dias="14"]:not(.vld-btn)').classList.add('active');
 }
 
 /* ── Top-N selector for report ──────────────────────────────────────────── */
@@ -64,11 +71,14 @@ function setupTopButtons() {
 }
 
 /* ── Dropzone helper ─────────────────────────────────────────────────────── */
+/**
+ * Wires up drag-and-drop and the file input change event for a dropzone.
+ * The click-to-open behaviour is handled natively by the <label> element in
+ * the HTML (no JS needed), which makes it reliably work on mobile browsers too.
+ */
 function setupDropzone(zoneId, inputId, progressId, statusId, tipo, isVendas) {
   const zone  = $(zoneId);
   const input = $(inputId);
-
-  zone.addEventListener('click', () => input.click());
 
   zone.addEventListener('dragover', (e) => {
     e.preventDefault();
@@ -451,11 +461,14 @@ function parseDrogamaisEstoqueRows(allRows, headerIdx) {
  * Parses the DROGAMAIS "Sugestão de Compras – Pelas Vendas no Período" report.
  * Works for both CSV and XLS exports of this report.
  *
- * Column layout (0-indexed):
- *   cells[2]  = Código (product code)
- *   cells[3]  = Produto (product name)
- *   cells[9]  = Saldo Estoque (current stock at branch)
- *   cells[13] = Qtd. Vend. (qty sold during the report period)
+ * Column layout is detected dynamically by scanning header rows:
+ *   Cód.  column → product code
+ *   next column → product name
+ *   sub-header "Estoq" column → Saldo Estoque (current branch stock)
+ *   sub-header "Vend." column → Qtd. Vendida (qty sold during the period)
+ *
+ * Fallback defaults if detection fails:
+ *   cells[2]=code, cells[3]=name, cells[9]=saldo, cells[13]=qtdVend
  *
  * The sales period (in days) is extracted from the "Período:" date range in the
  * report header so the daily average calculation is accurate.
@@ -481,20 +494,49 @@ function parseSugestaoRows(allRows) {
     }
   }
 
+  // ── Detect column positions from header rows ────────────────────────────
+  // Defaults match the standard Drogamais report layout (range.s.c = 0)
+  let codeCol  = 2;   // "Cód." column
+  let nomeCol  = 3;   // Product name column (next after code)
+  let saldoCol = 9;   // "Estoq" (Saldo Estoq) in the sub-header row
+  let vendCol  = 13;  // "Vend." (Qtd. Vend.) in the sub-header row
+
+  for (let i = 0; i < Math.min(20, allRows.length); i++) {
+    const cells = allRows[i].map((c) => String(c == null ? '' : c).trim());
+
+    // Detect code column from "Cód." header (row with main column labels)
+    const cidx = cells.findIndex((c) => /^C[ÓO]D\.?$/i.test(c));
+    if (cidx >= 0) {
+      codeCol = cidx;
+      nomeCol = cidx + 1;
+    }
+
+    // Detect stock and sales columns from the sub-header row:
+    //   "Estoq" = Saldo Estoq (local branch stock)
+    //   "Vend." = Qtd. Vendida (qty sold in the period)
+    const eidx = cells.findIndex((c) => /^ESTOQ$/i.test(c));
+    const vidx = cells.findIndex((c) => /^VEND\.?$/i.test(c));
+    if (eidx >= 0 && vidx >= 0) {
+      saldoCol = eidx;
+      vendCol  = vidx;
+      break; // sub-header row found – stop scanning
+    }
+  }
+
   const estoqueRows = [];
   const vendasRows  = [];
 
   for (let i = 0; i < allRows.length; i++) {
     const cells = allRows[i].map((c) => String(c == null ? '' : c).trim());
-    const code  = cells[2] || '';
+    const code  = cells[codeCol] || '';
     // Only process rows whose code column is a positive number (product rows)
     if (!code || isNaN(parseFloat(code)) || parseFloat(code) <= 0) continue;
 
-    const nome = cells[3] || '';
+    const nome = cells[nomeCol] || '';
     if (!nome) continue;
 
-    const saldo   = parseFloat((cells[9]  || '0').replace(',', '.')) || 0;
-    const qtdVend = parseFloat((cells[13] || '0').replace(',', '.')) || 0;
+    const saldo   = parseFloat((cells[saldoCol] || '0').replace(',', '.')) || 0;
+    const qtdVend = parseFloat((cells[vendCol]  || '0').replace(',', '.')) || 0;
 
     const nomeComCodigo = `${code} – ${nome}`;
     estoqueRows.push([nomeComCodigo, Math.max(0, saldo)]); // clamp negative stock to 0
@@ -522,6 +564,7 @@ function parseSimpleRows(allRows) {
 
 /**
  * Sends rows to the Apps Script in batches of CONFIG.BATCH_SIZE.
+ * Only the first batch clears the sheet (clearFirst=true); subsequent batches append.
  */
 async function uploadEmLotes(rows, tipo, progressId, periodo) {
   const action = tipo === 'Estoque' ? 'importarEstoque' : 'importarVendas';
@@ -530,8 +573,8 @@ async function uploadEmLotes(rows, tipo, progressId, periodo) {
 
   for (let i = 0; i < total; i += CONFIG.BATCH_SIZE) {
     const lote = rows.slice(i, i + CONFIG.BATCH_SIZE);
-    const body = { action, dados: lote };
-    if (periodo) body.periodo = periodo;
+    const body = { action, dados: lote, clearFirst: i === 0 };
+    if (periodo) body.periodo = periodo; // always send so Apps Script can store it on clearFirst
 
     const resp = await fetchPost(CONFIG.APPS_SCRIPT_URL, body);
     if (!resp.ok) throw new Error(resp.error || 'Erro desconhecido no servidor.');
@@ -603,11 +646,28 @@ function renderResultado(data) {
 /* ── PDF download helper (cross-device) ──────────────────────────────────── */
 /**
  * Saves a jsPDF document.
- * Uses jsPDF's built-in save() which handles cross-platform differences
- * (desktop download vs. iOS new-tab).
+ * Uses a blob URL + hidden anchor trick so the download works on both desktop
+ * and mobile browsers (including iOS Safari which ignores the `download` attr
+ * but can open a blob in a new tab where the user can then share/save the PDF).
  */
 function downloadPdf(doc, filename) {
-  doc.save(filename);
+  try {
+    const blob = doc.output('blob');
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href     = url;
+    a.download = filename;
+    a.target   = '_blank';
+    a.rel      = 'noopener';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    // Release the object URL after a short delay to allow the download to start
+    setTimeout(() => URL.revokeObjectURL(url), 500);
+  } catch (e) {
+    // Fallback: use jsPDF built-in save (works on most desktop browsers)
+    doc.save(filename);
+  }
 }
 
 /* ── PDF export ──────────────────────────────────────────────────────────── */
@@ -883,4 +943,432 @@ function escHtml(str) {
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
+}
+
+/* ─────────────────────────────────────────────────────────────────────────── */
+/* ── Validades (Expiry Dates) Feature ───────────────────────────────────── */
+/* ─────────────────────────────────────────────────────────────────────────── */
+
+/* ── Validade period selector ──────────────────────────────────────────── */
+function setupValidadePeriodButtons() {
+  document.querySelectorAll('.vld-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.vld-btn').forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+      state.validadeDias = parseInt(btn.dataset.dias, 10);
+      // Re-render if data is already loaded
+      if (state.validadeItens) renderValidade(state.validadeItens);
+    });
+  });
+  state.validadeDias = 60; // default
+}
+
+/* ── Validade dropzone setup ────────────────────────────────────────────── */
+function setupValidadeDropzone() {
+  const zone  = $('validadeDropzone');
+  const input = $('validadeCsvInput');
+
+  zone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    zone.classList.add('over');
+  });
+  zone.addEventListener('dragleave', () => zone.classList.remove('over'));
+  zone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    zone.classList.remove('over');
+    const file = e.dataTransfer.files[0];
+    if (file) handleValidadeFile(file);
+  });
+
+  input.addEventListener('change', () => {
+    if (input.files[0]) handleValidadeFile(input.files[0]);
+    input.value = '';
+  });
+}
+
+/* ── Handle uploaded validade file ─────────────────────────────────────── */
+function handleValidadeFile(file) {
+  const isXls = file.name.match(/\.xlsx?$/i) ||
+                /application\/vnd\.(ms-excel|openxmlformats-officedocument\.spreadsheetml\.sheet)/.test(file.type);
+  const isCsv = file.name.match(/\.(csv|txt)$/i) ||
+                /^text\/(csv|plain)$/.test(file.type);
+
+  if (!isXls && !isCsv) {
+    showToast('Arquivo inválido. Use CSV, XLS ou XLSX.', 'error');
+    return;
+  }
+
+  const status = $('validadeStatus');
+  status.textContent = 'Lendo arquivo…';
+
+  if (isXls) {
+    if (typeof XLSX === 'undefined') {
+      showToast('Erro: biblioteca XLS não carregou. Verifique sua conexão e recarregue a página.', 'error');
+      status.textContent = '❌ Biblioteca XLS indisponível.';
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const data   = new Uint8Array(e.target.result);
+        const wb     = XLSX.read(data, { type: 'array', cellDates: true });
+        const ws     = wb.Sheets[wb.SheetNames[0]];
+        const itens  = parseValidadeXls(ws);
+        processValidadeItens(itens, status);
+      } catch (err) {
+        status.textContent = `❌ Erro: ${err.message}`;
+        showToast(`Erro ao ler arquivo: ${err.message}`, 'error');
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  } else {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const itens = parseValidadeCsv(e.target.result);
+      processValidadeItens(itens, status);
+    };
+    reader.readAsText(file, 'UTF-8');
+  }
+}
+
+function processValidadeItens(itens, status) {
+  if (itens.length === 0) {
+    status.textContent = '⚠️ Nenhum produto com data de validade encontrado. Verifique o formato do arquivo.';
+    showToast('Nenhum item de validade encontrado.', 'error');
+    return;
+  }
+  state.validadeItens = itens;
+  status.textContent = `✅ ${itens.length} itens carregados.`;
+  renderValidade(itens);
+  showToast(`Validades carregadas: ${itens.length} itens.`, 'success');
+}
+
+/**
+ * Parses a SheetJS worksheet for expiry-date data.
+ * Detects columns dynamically: Produto/Descrição, Lote, Validade, Qtd.
+ */
+function parseValidadeXls(ws) {
+  const ref = ws['!ref'];
+  if (!ref) return [];
+
+  const range   = XLSX.utils.decode_range(ref);
+  const allRows = [];
+  for (let r = range.s.r; r <= range.e.r; r++) {
+    const row = [];
+    for (let c = range.s.c; c <= range.e.c; c++) {
+      const cell = ws[XLSX.utils.encode_cell({ r, c })];
+      // Preserve raw value for dates; cell.w is the formatted string
+      row.push(cell ? (cell.w !== undefined ? cell.w : cell.v) : '');
+    }
+    allRows.push(row);
+  }
+  return parseValidadeRows(allRows);
+}
+
+/**
+ * Parses a CSV text for expiry-date data.
+ */
+function parseValidadeCsv(text) {
+  const lines   = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const sep     = lines[0]?.includes(';') ? ';' : ',';
+  const allRows = lines.map((line) => splitCsvLine(line, sep));
+  return parseValidadeRows(allRows);
+}
+
+/**
+ * Finds the header row and column indices for a validade file, then extracts items.
+ * Supports flexible column layouts by searching for keywords.
+ *
+ * Required: a column containing a date (DD/MM/YYYY or MM/YYYY)
+ * Optional: Produto/Descrição, Lote, Quantidade
+ */
+function parseValidadeRows(allRows) {
+  // ── Detect header row and column indices ──────────────────────────────────
+  let prodCol     = -1;
+  let loteCol     = -1;
+  let validadeCol = -1;
+  let qtdCol      = -1;
+  let codeCol     = -1;
+  let headerIdx   = -1;
+
+  for (let i = 0; i < Math.min(20, allRows.length); i++) {
+    const cells = allRows[i].map((c) => String(c == null ? '' : c).trim().toUpperCase());
+    // Look for any header keyword
+    const hasHeader = cells.some(
+      (c) => /VALIDADE|VENCIMENTO|PRODUTO|DESCRIÇÃO|LOTE|QUANT/i.test(c)
+    );
+    if (!hasHeader) continue;
+
+    headerIdx   = i;
+    validadeCol = cells.findIndex((c) => /VALIDADE|VENCIMENTO/i.test(c));
+    prodCol     = cells.findIndex((c) => /PRODUTO|DESCRI|MEDICAMENTO|NOME/i.test(c));
+    loteCol     = cells.findIndex((c) => /^LOTE$/i.test(c));
+    qtdCol      = cells.findIndex((c) => /QUANT|QTD/i.test(c));
+    codeCol     = cells.findIndex((c) => /^C[ÓO]D(IGO)?\.?$/i.test(c));
+    break;
+  }
+
+  // If no header found try to detect columns by data patterns
+  if (validadeCol < 0) {
+    // Scan data rows for a column that has date-like values
+    for (let i = 0; i < Math.min(30, allRows.length); i++) {
+      const cells = allRows[i].map((c) => String(c == null ? '' : c).trim());
+      for (let j = 0; j < cells.length; j++) {
+        if (/^\d{2}\/\d{2}\/\d{4}$/.test(cells[j]) || /^\d{2}\/\d{4}$/.test(cells[j])) {
+          validadeCol = j;
+          // Assume product name is the first text column before the date
+          if (j > 0) prodCol = j - 1;
+          headerIdx = -1; // no header row
+          break;
+        }
+      }
+      if (validadeCol >= 0) break;
+    }
+  }
+
+  if (validadeCol < 0) return []; // no date column found
+
+  const items = [];
+  const dataStart = headerIdx >= 0 ? headerIdx + 1 : 0;
+
+  for (let i = dataStart; i < allRows.length; i++) {
+    const cells   = allRows[i].map((c) => String(c == null ? '' : c).trim());
+    const valRaw  = cells[validadeCol] || '';
+    if (!valRaw) continue;
+
+    const validade = parseValidadeDate(valRaw);
+    if (!validade) continue;
+
+    const code  = codeCol  >= 0 ? (cells[codeCol]  || '') : '';
+    const nome  = prodCol  >= 0 ? (cells[prodCol]   || '') : '';
+    const lote  = loteCol  >= 0 ? (cells[loteCol]   || '') : '';
+    const qtd   = qtdCol   >= 0 ? (parseFloat((cells[qtdCol] || '0').replace(',', '.')) || 0) : 0;
+
+    if (!nome && !code) continue; // skip rows without product identification
+
+    items.push({
+      code,
+      nome: code ? `${code} – ${nome}` : nome,
+      lote,
+      validade,
+      qtd,
+    });
+  }
+  return items;
+}
+
+/**
+ * Parses a date string in DD/MM/YYYY or MM/YYYY format.
+ * MM/YYYY is treated as the last day of that month.
+ * Returns a Date object or null if parsing fails.
+ */
+function parseValidadeDate(str) {
+  // DD/MM/YYYY
+  let m = str.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (m) {
+    const d = new Date(+m[3], +m[2] - 1, +m[1]);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  // MM/YYYY → last day of that month
+  m = str.match(/^(\d{2})\/(\d{4})$/);
+  if (m) {
+    const d = new Date(+m[2], +m[1], 0); // day 0 of next month = last day of this month
+    return isNaN(d.getTime()) ? null : d;
+  }
+  // YYYY-MM-DD (ISO)
+  m = str.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (m) {
+    const d = new Date(+m[1], +m[2] - 1, +m[3]);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  // Try native Date parsing as last resort
+  const d = new Date(str);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+/* ── Render validade results ────────────────────────────────────────────── */
+function renderValidade(itens) {
+  const hoje       = new Date();
+  hoje.setHours(0, 0, 0, 0);
+  const diasAlerta = state.validadeDias || 60;
+  const limiteAlerta = new Date(hoje.getTime() + diasAlerta * 86400000);
+
+  const vencidos     = [];
+  const proxVencer   = [];
+
+  itens.forEach((item) => {
+    const val = new Date(item.validade);
+    val.setHours(0, 0, 0, 0);
+    const diffDias = Math.round((val - hoje) / 86400000);
+    if (diffDias < 0) {
+      vencidos.push({ ...item, diffDias });
+    } else if (val <= limiteAlerta) {
+      proxVencer.push({ ...item, diffDias });
+    }
+  });
+
+  // Sort: most expired first, then soonest-to-expire first
+  vencidos.sort((a, b) => a.diffDias - b.diffDias);
+  proxVencer.sort((a, b) => a.diffDias - b.diffDias);
+
+  state.validadeResultado = { vencidos, proxVencer, diasAlerta };
+
+  const section = $('validadeResultSection');
+  section.style.display = 'block';
+
+  $('validadeMeta').innerHTML =
+    `<span>Total carregado: <strong>${itens.length}</strong></span>` +
+    `<span>🔴 Vencidos: <strong>${vencidos.length}</strong></span>` +
+    `<span>🟡 Vencem em até ${diasAlerta} dias: <strong>${proxVencer.length}</strong></span>` +
+    `<span>Gerado em: <strong>${hoje.toLocaleDateString('pt-BR')}</strong></span>`;
+
+  const hasItems = vencidos.length > 0 || proxVencer.length > 0;
+  $('validadeEmpty').style.display = hasItems ? 'none' : 'block';
+
+  // Vencidos table
+  const vWrap = $('vencidosWrap');
+  if (vencidos.length > 0) {
+    vWrap.style.display = 'block';
+    const tbody = $('vencidosBody');
+    tbody.innerHTML = '';
+    vencidos.forEach((item, idx) => {
+      const tr = document.createElement('tr');
+      tr.className = 'row-vencido';
+      tr.innerHTML = `
+        <td>${idx + 1}</td>
+        <td>${escHtml(item.nome)}</td>
+        <td>${escHtml(item.lote)}</td>
+        <td>${item.validade.toLocaleDateString('pt-BR')}</td>
+        <td>${item.qtd || '–'}</td>
+        <td><span class="badge-vencido">${Math.abs(item.diffDias)} dias atrás</span></td>`;
+      tbody.appendChild(tr);
+    });
+  } else {
+    vWrap.style.display = 'none';
+  }
+
+  // Próximos a vencer table
+  const pWrap = $('proxVencerWrap');
+  if (proxVencer.length > 0) {
+    pWrap.style.display = 'block';
+    const tbody = $('proxVencerBody');
+    tbody.innerHTML = '';
+    proxVencer.forEach((item, idx) => {
+      const tr = document.createElement('tr');
+      tr.className = 'row-proxvencer';
+      tr.innerHTML = `
+        <td>${idx + 1}</td>
+        <td>${escHtml(item.nome)}</td>
+        <td>${escHtml(item.lote)}</td>
+        <td>${item.validade.toLocaleDateString('pt-BR')}</td>
+        <td>${item.qtd || '–'}</td>
+        <td><span class="badge-proxvencer">${item.diffDias} dias</span></td>`;
+      tbody.appendChild(tr);
+    });
+  } else {
+    pWrap.style.display = 'none';
+  }
+
+  section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+/* ── PDF export for validade ────────────────────────────────────────────── */
+function exportarValidadePdf() {
+  if (!state.validadeResultado) return;
+  if (typeof window.jspdf === 'undefined' || typeof window.jspdf.jsPDF === 'undefined') {
+    showToast('Biblioteca de PDF não carregou. Verifique sua conexão e recarregue a página.', 'error');
+    return;
+  }
+  try {
+    const { jsPDF } = window.jspdf;
+    const doc       = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+    const farmacia  = CONFIG.FARMACIA_NOME;
+    const hoje      = new Date().toLocaleDateString('pt-BR');
+    const { vencidos, proxVencer, diasAlerta } = state.validadeResultado;
+
+    // Header
+    doc.setFillColor(26, 111, 196);
+    doc.rect(0, 0, 210, 28, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(16);
+    doc.setFont('helvetica', 'bold');
+    doc.text(farmacia, 14, 12);
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`Relatório de Validades – Alerta: ${diasAlerta} dias`, 14, 20);
+    doc.text(`Gerado em: ${hoje}`, 155, 20);
+
+    const cols   = ['#', 'Cód. / Produto', 'Lote', 'Validade', 'Qtd', 'Situação'];
+    const widths = [8, 76, 28, 24, 14, 30];
+
+    function drawSection(title, items, colorFn) {
+      let y = doc.internal.getCurrentPageInfo().pageNumber === 1 ? 36 : 20;
+      // Section title
+      doc.setFontSize(11);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(...colorFn('title'));
+      doc.text(title, 14, y);
+      y += 8;
+
+      // Column headers
+      doc.setFontSize(8);
+      doc.setTextColor(0, 0, 0);
+      doc.setFillColor(230, 238, 255);
+      doc.rect(10, y - 5, 190, 8, 'F');
+      let x = 14;
+      cols.forEach((c, i) => { doc.text(c, x, y); x += widths[i]; });
+      doc.setFont('helvetica', 'normal');
+      y += 6;
+
+      items.forEach((item, idx) => {
+        if (y > 275) { doc.addPage(); y = 20; }
+        if (idx % 2 === 0) {
+          doc.setFillColor(...colorFn('rowBg'));
+          doc.rect(10, y - 4, 190, 7, 'F');
+        }
+        x = 14;
+        const situacao = item.diffDias < 0
+          ? `Vencido há ${Math.abs(item.diffDias)}d`
+          : `Vence em ${item.diffDias}d`;
+        const row = [
+          String(idx + 1),
+          item.nome.length > 42 ? item.nome.substring(0, 40) + '…' : item.nome,
+          item.lote || '–',
+          item.validade.toLocaleDateString('pt-BR'),
+          item.qtd ? String(item.qtd) : '–',
+          situacao,
+        ];
+        row.forEach((cell, i) => {
+          if (i === 5) {
+            doc.setFont('helvetica', 'bold');
+            doc.setTextColor(...colorFn('situacao'));
+          }
+          doc.text(cell, x, y);
+          doc.setFont('helvetica', 'normal');
+          doc.setTextColor(0, 0, 0);
+          x += widths[i];
+        });
+        y += 7;
+      });
+    }
+
+    if (vencidos.length > 0) {
+      drawSection(`🔴 Produtos Vencidos (${vencidos.length})`, vencidos,
+        (part) => part === 'title' ? [192, 57, 43] : part === 'rowBg' ? [255, 235, 235] : [192, 57, 43]);
+    }
+    if (proxVencer.length > 0) {
+      if (vencidos.length > 0) doc.addPage();
+      drawSection(`🟡 Próximos a Vencer em até ${diasAlerta} dias (${proxVencer.length})`, proxVencer,
+        (part) => part === 'title' ? [180, 90, 0] : part === 'rowBg' ? [255, 248, 225] : [180, 90, 0]);
+    }
+
+    doc.setFontSize(7);
+    doc.setTextColor(120, 120, 120);
+    doc.text(`Total vencidos: ${vencidos.length} | Próximos a vencer: ${proxVencer.length}`, 14, 290);
+
+    downloadPdf(doc, `validades-${hoje.replace(/\//g, '-')}.pdf`);
+    showToast('PDF de validades gerado!', 'success');
+  } catch (err) {
+    showToast(`Erro ao gerar PDF: ${err.message}`, 'error');
+  }
 }

@@ -65,14 +65,14 @@ function doPost(e) {
     var action  = payload.action;
 
     if (action === 'importarEstoque') {
-      importarDados(SHEET_ESTOQUE, payload.dados);
+      importarDados(SHEET_ESTOQUE, payload.dados, payload.clearFirst !== false);
       return jsonOk({ importados: payload.dados.length });
     }
 
     if (action === 'importarVendas') {
-      importarDados(SHEET_VENDAS, payload.dados);
-      // Optionally store the period in D1
-      if (payload.periodo) {
+      importarDados(SHEET_VENDAS, payload.dados, payload.clearFirst !== false);
+      // Optionally store the period in D1 (only on first batch to avoid overwrite)
+      if (payload.periodo && payload.clearFirst !== false) {
         var ss    = SpreadsheetApp.getActiveSpreadsheet();
         var sheet = ss.getSheetByName(SHEET_VENDAS);
         sheet.getRange('D1').setValue(payload.periodo);
@@ -175,31 +175,43 @@ function calcularNecessidade(diasCobertura) {
 // ─── Import helpers ───────────────────────────────────────────────────────────
 
 /**
- * Replaces all data in the given sheet with the provided rows.
+ * Writes rows to the given sheet.
  * @param {string}   sheetName  Target sheet name
  * @param {Array}    dados      Array of [name, qty] pairs (already parsed)
+ * @param {boolean}  clearFirst Whether to clear the sheet before writing (true for first batch)
  */
-function importarDados(sheetName, dados) {
+function importarDados(sheetName, dados, clearFirst) {
   var ss    = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName(sheetName);
 
   if (!sheet) {
     sheet = ss.insertSheet(sheetName);
-  } else {
-    sheet.clearContents();
+    clearFirst = true; // always clear a brand-new sheet
   }
 
   if (!dados || dados.length === 0) return;
 
-  // Write header
-  sheet.getRange(1, 1, 1, 2).setValues([['Medicamento', 'Quantidade']]);
+  if (clearFirst) {
+    sheet.clearContents();
+    // Write header on the very first batch
+    sheet.getRange(1, 1, 1, 2).setValues([['Medicamento', 'Quantidade']]);
+  } else {
+    // Ensure the sheet has a header row even if it was created externally
+    if (sheet.getLastRow() === 0) {
+      sheet.getRange(1, 1, 1, 2).setValues([['Medicamento', 'Quantidade']]);
+    }
+  }
 
-  // Write data in a single batch call for performance (handles 900 rows easily)
+  // Determine the next available row (append after existing data)
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 1) lastRow = 1; // ensure at least after header
+
+  // Write data in a single batch call for performance
   var rows = dados.map(function(row) {
     return [String(row[0]).trim(), parseFloat(row[1]) || 0];
   });
 
-  sheet.getRange(2, 1, rows.length, 2).setValues(rows);
+  sheet.getRange(lastRow + 1, 1, rows.length, 2).setValues(rows);
 }
 
 // ─── Report: most-sold items ──────────────────────────────────────────────────
