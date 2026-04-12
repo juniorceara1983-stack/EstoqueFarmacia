@@ -1,8 +1,3 @@
-/**
- * appsscript/appsscript.json
- * Manifest for the Apps Script project.
- * Copy this content if you create the project via clasp or manually.
- */
 {
   "timeZone": "America/Fortaleza",
   "dependencies": {},
