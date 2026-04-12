@@ -648,7 +648,7 @@ function calcularLocal(diasCobertura) {
   (state.vendasLocal || []).forEach(([nome, vendasTotais]) => {
     const chave      = String(nome == null ? '' : nome).trim().toUpperCase();
     if (!chave) return;
-    const estoqueAtual = mapaEstoque[chave] !== undefined ? mapaEstoque[chave] : 0;
+    const estoqueAtual = mapaEstoque[chave] ?? 0;
     const vendas       = Number(vendasTotais) || 0;
     const mediaDiaria  = vendas / diasVendas;
     const projecao     = mediaDiaria * diasCobertura;
