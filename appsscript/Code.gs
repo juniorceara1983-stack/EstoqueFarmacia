@@ -195,6 +195,11 @@ function importarDados(sheetName, dados, clearFirst) {
     sheet.clearContents();
     // Write header on the very first batch
     sheet.getRange(1, 1, 1, 2).setValues([['Medicamento', 'Quantidade']]);
+  } else {
+    // Ensure the sheet has a header row even if it was created externally
+    if (sheet.getLastRow() === 0) {
+      sheet.getRange(1, 1, 1, 2).setValues([['Medicamento', 'Quantidade']]);
+    }
   }
 
   // Determine the next available row (append after existing data)

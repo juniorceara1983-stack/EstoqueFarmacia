@@ -574,7 +574,7 @@ async function uploadEmLotes(rows, tipo, progressId, periodo) {
   for (let i = 0; i < total; i += CONFIG.BATCH_SIZE) {
     const lote = rows.slice(i, i + CONFIG.BATCH_SIZE);
     const body = { action, dados: lote, clearFirst: i === 0 };
-    if (periodo && i === 0) body.periodo = periodo;
+    if (periodo) body.periodo = periodo; // always send so Apps Script can store it on clearFirst
 
     const resp = await fetchPost(CONFIG.APPS_SCRIPT_URL, body);
     if (!resp.ok) throw new Error(resp.error || 'Erro desconhecido no servidor.');
@@ -663,7 +663,7 @@ function downloadPdf(doc, filename) {
     a.click();
     document.body.removeChild(a);
     // Release the object URL after a short delay to allow the download to start
-    setTimeout(() => URL.revokeObjectURL(url), 60000);
+    setTimeout(() => URL.revokeObjectURL(url), 500);
   } catch (e) {
     // Fallback: use jsPDF built-in save (works on most desktop browsers)
     doc.save(filename);
