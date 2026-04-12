@@ -443,10 +443,10 @@ function parseDrogamaisEstoqueRows(allRows, headerIdx) {
  * Works for both CSV and XLS exports of this report.
  *
  * Column layout (0-indexed):
- *   [2]  = Código (product code)
- *   [3]  = Produto (product name)
- *   [9]  = Saldo Estoque (current stock at branch)
- *   [13] = Qtd. Vend. (qty sold during the report period)
+ *   cells[2]  = Código (product code)
+ *   cells[3]  = Produto (product name)
+ *   cells[9]  = Saldo Estoque (current stock at branch)
+ *   cells[13] = Qtd. Vend. (qty sold during the report period)
  *
  * The sales period (in days) is extracted from the "Período:" date range in the
  * report header so the daily average calculation is accurate.
@@ -460,10 +460,12 @@ function parseSugestaoRows(allRows) {
   for (let i = 0; i < Math.min(15, allRows.length); i++) {
     const cells = allRows[i].map((c) => String(c == null ? '' : c).trim());
     for (const cell of cells) {
+      // Matches date ranges like "04/04/2026 00:00:00 à 11/04/2026 23:59:59" (DD/MM/YYYY)
       const m = cell.match(/(\d{2})\/(\d{2})\/(\d{4}).*?(\d{2})\/(\d{2})\/(\d{4})/);
       if (m) {
-        const d1   = new Date(+m[3], +m[2] - 1, +m[1]);
-        const d2   = new Date(+m[6], +m[5] - 1, +m[4]);
+        const [, day1, month1, year1, day2, month2, year2] = m;
+        const d1   = new Date(+year1, +month1 - 1, +day1);
+        const d2   = new Date(+year2, +month2 - 1, +day2);
         const diff = Math.round((d2 - d1) / 86400000);
         if (diff > 0) { periodoDias = diff; break; }
       }
