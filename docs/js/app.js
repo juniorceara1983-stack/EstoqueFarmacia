@@ -90,8 +90,10 @@ function setupDropzone(zoneId, inputId, progressId, statusId, tipo, isVendas) {
 
 /* ── CSV parsing and upload ──────────────────────────────────────────────── */
 function handleCsvFile(file, progressId, statusId, tipo, isVendas) {
-  const isXls = file.name.match(/\.xlsx?$/i);
-  const isCsv = file.name.match(/\.(csv|txt)$/i);
+  const isXls = file.name.match(/\.xlsx?$/i) ||
+                /application\/vnd\.(ms-excel|openxmlformats-officedocument\.spreadsheetml\.sheet)/.test(file.type);
+  const isCsv = file.name.match(/\.(csv|txt)$/i) ||
+                /^text\/(csv|plain)$/.test(file.type);
 
   if (!isXls && !isCsv) {
     showToast('Arquivo inválido. Use CSV, XLS ou XLSX.', 'error');
@@ -590,6 +592,27 @@ function renderResultado(data) {
   });
 }
 
+/* ── PDF download helper (cross-device) ──────────────────────────────────── */
+/**
+ * Downloads a jsPDF document as a file.
+ * Sets both `download` (honoured by desktop browsers) and `target="_blank"`
+ * (honoured by iOS Safari, which ignores `download` for blob URLs) so the
+ * PDF is always accessible without navigating away from the page.
+ */
+function downloadPdf(doc, filename) {
+  const blob = doc.output('blob');
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = filename;
+  a.target   = '_blank';
+  a.rel      = 'noopener';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 500); // brief delay lets the browser start loading before the URL is revoked
+}
+
 /* ── PDF export ──────────────────────────────────────────────────────────── */
 function exportarPdf() {
   if (!state.resultado) return;
@@ -663,7 +686,7 @@ function exportarPdf() {
   doc.setTextColor(120, 120, 120);
   doc.text(`Total: ${data.totalItens} item(s) | Período de vendas: ${data.diasVendas} dias`, 14, 290);
 
-  doc.save(`lista-compras-${data.diasCobertura}dias-${hoje.replace(/\//g, '-')}.pdf`);
+  downloadPdf(doc, `lista-compras-${data.diasCobertura}dias-${hoje.replace(/\//g, '-')}.pdf`);
   showToast('PDF gerado com sucesso!', 'success');
 }
 
@@ -793,7 +816,7 @@ function exportarRelatorioPdf() {
   doc.setTextColor(120, 120, 120);
   doc.text(`Total: ${data.totalItens} item(s) | Período de vendas: ${data.diasVendas} dias`, 14, 290);
 
-  doc.save(`relatorio-mais-vendidos-${label.toLowerCase().replace(/ /g, '')}-${hoje.replace(/\//g, '-')}.pdf`);
+  downloadPdf(doc, `relatorio-mais-vendidos-${label.toLowerCase().replace(/ /g, '')}-${hoje.replace(/\//g, '-')}.pdf`);
   showToast('PDF do relatório gerado!', 'success');
 }
 
