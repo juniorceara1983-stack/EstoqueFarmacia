@@ -255,9 +255,15 @@ function splitCsvLine(line, sep) {
   let inQ = false;
   for (let i = 0; i < line.length; i++) {
     const ch = line[i];
-    if (ch === '"')            { inQ = !inQ; }
-    else if (ch === sep && !inQ) { result.push(cur); cur = ''; }
-    else                       { cur += ch; }
+    if (ch === '"') {
+      // Doubled quotes inside a quoted field represent a literal quote character
+      if (inQ && line[i + 1] === '"') { cur += '"'; i++; }
+      else { inQ = !inQ; }
+    } else if (ch === sep && !inQ) {
+      result.push(cur); cur = '';
+    } else {
+      cur += ch;
+    }
   }
   result.push(cur);
   return result;
@@ -323,12 +329,17 @@ function parseNFRows(allRows, headerIdx, header) {
 
 /**
  * Parses a Rede / Estoque report file.
- * In this format the code is fixed at column 2 and the medicine name at column 3
- * (these columns have no header label). Estoque and Vend. are located by header name.
- * Returns separate arrays for estoque and vendas so both sheets can be populated at once.
- * The vendas period is assumed to be 30 days (one month).
+ * In this format the code is at column index 2 and the medicine name at index 3;
+ * these columns carry no header label in the source report (the header row only
+ * labels columns from "Estoq" onward). The Estoq and Vend. columns are located
+ * dynamically by their header names.
+ * Returns separate arrays for estoque and vendas so both sheets can be populated
+ * from a single file. The vendas period is assumed to be 30 days (monthly column).
+ * Note: valid product codes in this format are always numeric; non-numeric values
+ * in that column indicate branch/group header rows that must be skipped.
  */
 function parseRedeRows(allRows, headerIdx, header) {
+  // Columns 2 (code) and 3 (name) have no header labels in this report format
   const codeIdx  = 2;
   const nomeIdx  = 3;
   const estoqIdx = header.findIndex((h) => /ESTOQ/i.test(h));
@@ -361,12 +372,13 @@ function parseRedeRows(allRows, headerIdx, header) {
 
 /**
  * Plain 2-column fallback parser: col A = name, col B = quantity.
+ * Quote characters are already stripped by splitCsvLine / SheetJS at this point.
  */
 function parseSimpleRows(allRows) {
   const rows = [];
   for (const row of allRows) {
-    const nome   = String(row[0] == null ? '' : row[0]).trim().replace(/^"|"$/g, '');
-    const qtdRaw = String(row[1] == null ? '' : row[1]).trim().replace(/^"|"$/g, '').replace(',', '.');
+    const nome   = String(row[0] == null ? '' : row[0]).trim();
+    const qtdRaw = String(row[1] == null ? '' : row[1]).trim().replace(',', '.');
     const qtd    = parseFloat(qtdRaw);
     if (!nome || isNaN(qtd)) continue;
     rows.push([nome, qtd]);
