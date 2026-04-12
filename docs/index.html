@@ -36,15 +36,15 @@
       </div>
 
       <div class="dropzone" id="estoqueDropzone">
-        <input type="file" id="estoqueCsvInput" accept=".csv,.txt">
+        <input type="file" id="estoqueCsvInput" accept=".csv,.txt,.xls,.xlsx">
         <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor"
              stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
           <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
           <polyline points="14 2 14 8 20 8"/>
         </svg>
-        <strong>Arraste o CSV de Estoque aqui</strong>
+        <strong>Arraste o arquivo de Estoque aqui</strong>
         ou clique para selecionar<br>
-        <small>Colunas: Medicamento | Quantidade</small>
+        <small>Formatos: CSV, XLS ou XLSX &nbsp;|&nbsp; Colunas: Medicamento | Quantidade</small>
       </div>
 
       <div class="progress-wrap" id="estoqueProgressWrap">
@@ -69,15 +69,15 @@
       </div>
 
       <div class="dropzone" id="vendasDropzone">
-        <input type="file" id="vendasCsvInput" accept=".csv,.txt">
+        <input type="file" id="vendasCsvInput" accept=".csv,.txt,.xls,.xlsx">
         <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor"
              stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
           <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
           <polyline points="14 2 14 8 20 8"/>
         </svg>
-        <strong>Arraste o CSV de Vendas aqui</strong>
+        <strong>Arraste o arquivo de Vendas aqui</strong>
         ou clique para selecionar<br>
-        <small>Colunas: Medicamento | Qtd vendida nos últimos N dias</small>
+        <small>Formatos: CSV, XLS ou XLSX &nbsp;|&nbsp; Colunas: Medicamento | Qtd vendida nos últimos N dias</small>
       </div>
 
       <div class="progress-wrap" id="vendasProgressWrap">
@@ -266,6 +266,9 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"
         integrity="sha512-qZvrmS2ekKPF2mSznTQsxqPgnpkI4DNTlrdUmTzrDgektczlKNRRhy5X5AAOnx5S09ydFYWWNSfDgfbVLo7lZw=="
         crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+
+<!-- SheetJS for XLS/XLSX parsing -->
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
 
 <!-- App config (edit APPS_SCRIPT_URL here) -->
 <script src="js/config.js"></script>
