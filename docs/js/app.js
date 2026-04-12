@@ -13,9 +13,11 @@
 /* ── State ──────────────────────────────────────────────────────────────── */
 const state = {
   periodoSelecionado: 14,
+  topSelecionado: 10,
   estoqueCarregado: false,
   vendasCarregadas: false,
   resultado: null,
+  relatorio: null,
 };
 
 /* ── DOM refs ────────────────────────────────────────────────────────────── */
@@ -24,6 +26,7 @@ const $ = (id) => document.getElementById(id);
 /* ── Bootstrap ───────────────────────────────────────────────────────────── */
 document.addEventListener('DOMContentLoaded', () => {
   setupPeriodButtons();
+  setupTopButtons();
   setupDropzone('estoqueDropzone', 'estoqueCsvInput', 'estoqueProgress',
                 'estoqueStatus', 'Estoque', false);
   setupDropzone('vendasDropzone', 'vendasCsvInput', 'vendasProgress',
@@ -31,20 +34,33 @@ document.addEventListener('DOMContentLoaded', () => {
   $('btnCalcular').addEventListener('click', calcular);
   $('btnPdf').addEventListener('click', exportarPdf);
   $('btnWhatsapp').addEventListener('click', compartilharWhatsapp);
+  $('btnRelatorio').addEventListener('click', gerarRelatorio);
+  $('btnRelatorioPdf').addEventListener('click', exportarRelatorioPdf);
   updateCalcularBtn();
 });
 
 /* ── Period selector ────────────────────────────────────────────────────── */
 function setupPeriodButtons() {
-  document.querySelectorAll('.period-btn').forEach((btn) => {
+  document.querySelectorAll('.period-btn[data-dias]').forEach((btn) => {
     btn.addEventListener('click', () => {
-      document.querySelectorAll('.period-btn').forEach((b) => b.classList.remove('active'));
+      document.querySelectorAll('.period-btn[data-dias]').forEach((b) => b.classList.remove('active'));
       btn.classList.add('active');
       state.periodoSelecionado = parseInt(btn.dataset.dias, 10);
     });
   });
   // Default active
   document.querySelector('.period-btn[data-dias="14"]').classList.add('active');
+}
+
+/* ── Top-N selector for report ──────────────────────────────────────────── */
+function setupTopButtons() {
+  document.querySelectorAll('.top-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.top-btn').forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+      state.topSelecionado = parseInt(btn.dataset.top, 10);
+    });
+  });
 }
 
 /* ── Dropzone helper ─────────────────────────────────────────────────────── */
@@ -305,6 +321,118 @@ function compartilharWhatsapp() {
   window.open(url, '_blank');
 }
 
+/* ── Report: most-sold items ─────────────────────────────────────────────── */
+async function gerarRelatorio() {
+  const btn = $('btnRelatorio');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Gerando…';
+
+  try {
+    const url  = `${CONFIG.APPS_SCRIPT_URL}?action=relatorio&top=${state.topSelecionado}`;
+    const resp = await fetchGet(url);
+    if (!resp.ok) throw new Error(resp.error || 'Erro ao gerar relatório.');
+
+    state.relatorio = resp.data;
+    renderRelatorio(resp.data);
+    showToast(`Relatório gerado: ${resp.data.totalItens} item(s).`, 'success');
+  } catch (err) {
+    showToast(`Erro: ${err.message}`, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '📊 Gerar Relatório';
+  }
+}
+
+function renderRelatorio(data) {
+  $('relatorioResultado').style.display = 'block';
+
+  const label = state.topSelecionado > 0 ? `Top ${state.topSelecionado}` : 'Todos';
+  $('relatorioMeta').innerHTML =
+    `<span>Exibindo: <strong>${label}</strong></span>` +
+    `<span>Itens: <strong>${data.totalItens}</strong></span>` +
+    `<span>Período de vendas: <strong>${data.diasVendas} dias</strong></span>` +
+    `<span>Gerado em: <strong>${new Date(data.geradoEm).toLocaleString('pt-BR')}</strong></span>`;
+
+  const tbody = $('relatorioBody');
+  tbody.innerHTML = '';
+
+  data.itens.forEach((item, idx) => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><span class="badge-rank">${idx + 1}º</span></td>
+      <td>${escHtml(item.medicamento)}</td>
+      <td>${item.totalVendido}</td>
+      <td><strong>${item.mediaDiaria.toFixed(2)}</strong>/dia</td>`;
+    tbody.appendChild(tr);
+  });
+}
+
+function exportarRelatorioPdf() {
+  if (!state.relatorio) return;
+  const { jsPDF } = window.jspdf;
+  const doc  = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  const data = state.relatorio;
+  const farmacia = CONFIG.FARMACIA_NOME;
+  const hoje = new Date().toLocaleDateString('pt-BR');
+  const label = state.topSelecionado > 0 ? `Top ${state.topSelecionado}` : 'Todos';
+
+  // Header
+  doc.setFillColor(26, 111, 196);
+  doc.rect(0, 0, 210, 28, 'F');
+  doc.setTextColor(255, 255, 255);
+  doc.setFontSize(16);
+  doc.setFont('helvetica', 'bold');
+  doc.text(farmacia, 14, 12);
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'normal');
+  doc.text(`Relatório de Mais Vendidos – ${label} | Período: ${data.diasVendas} dias`, 14, 20);
+  doc.text(`Gerado em: ${hoje}`, 155, 20);
+
+  // Table
+  doc.setTextColor(0, 0, 0);
+  doc.setFontSize(8);
+  const cols   = ['#', 'Medicamento', 'Total Vendido', 'Média Diária'];
+  const widths = [10, 105, 38, 38];
+  let y = 36;
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFillColor(230, 238, 255);
+  doc.rect(10, y - 5, 190, 8, 'F');
+  let x = 14;
+  cols.forEach((c, i) => { doc.text(c, x, y); x += widths[i]; });
+  doc.setFont('helvetica', 'normal');
+  y += 6;
+
+  data.itens.forEach((item, idx) => {
+    if (y > 275) { doc.addPage(); y = 20; }
+    if (idx % 2 === 0) {
+      doc.setFillColor(247, 250, 255);
+      doc.rect(10, y - 4, 190, 7, 'F');
+    }
+    x = 14;
+    const row = [
+      String(idx + 1) + 'º',
+      item.medicamento.length > 55 ? item.medicamento.substring(0, 53) + '…' : item.medicamento,
+      String(item.totalVendido),
+      item.mediaDiaria.toFixed(2) + '/dia',
+    ];
+    row.forEach((cell, i) => {
+      if (i === 3) doc.setFont('helvetica', 'bold');
+      doc.text(cell, x, y);
+      doc.setFont('helvetica', 'normal');
+      x += widths[i];
+    });
+    y += 7;
+  });
+
+  doc.setFontSize(7);
+  doc.setTextColor(120, 120, 120);
+  doc.text(`Total: ${data.totalItens} item(s) | Período de vendas: ${data.diasVendas} dias`, 14, 290);
+
+  doc.save(`relatorio-mais-vendidos-${label.toLowerCase().replace(/ /g, '')}-${hoje.replace(/\//g, '-')}.pdf`);
+  showToast('PDF do relatório gerado!', 'success');
+}
+
 /* ── HTTP helpers ────────────────────────────────────────────────────────── */
 async function fetchGet(url) {
   const resp = await fetch(url);
@@ -325,6 +453,7 @@ async function fetchPost(url, body) {
 /* ── UI helpers ──────────────────────────────────────────────────────────── */
 function updateCalcularBtn() {
   $('btnCalcular').disabled = !(state.estoqueCarregado && state.vendasCarregadas);
+  $('btnRelatorio').disabled = !state.vendasCarregadas;
 }
 
 function showProgress(progressId) {

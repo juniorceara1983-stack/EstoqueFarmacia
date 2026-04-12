@@ -38,6 +38,13 @@ function doGet(e) {
       return jsonOk(resultado);
     }
 
+    if (action === 'relatorio') {
+      var top = parseInt(params.top, 10);
+      if (isNaN(top) || top < 0) top = 0; // 0 = todos
+      var relatorio = gerarRelatorioMaisVendidos(top);
+      return jsonOk(relatorio);
+    }
+
     if (action === 'ping') {
       return jsonOk({ status: 'ok', timestamp: new Date().toISOString() });
     }
@@ -193,6 +200,44 @@ function importarDados(sheetName, dados) {
   });
 
   sheet.getRange(2, 1, rows.length, 2).setValues(rows);
+}
+
+// ─── Report: most-sold items ──────────────────────────────────────────────────
+
+/**
+ * Reads the Vendas sheet and returns items sorted by mediaDiaria descending.
+ * @param {number} top  Number of items to return; 0 = all items.
+ * @returns {Object}
+ */
+function gerarRelatorioMaisVendidos(top) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+
+  var sheetVendas = ss.getSheetByName(SHEET_VENDAS);
+  if (!sheetVendas) throw new Error('Aba "' + SHEET_VENDAS + '" não encontrada.');
+  var dadosVendas = sheetVendas.getDataRange().getValues();
+
+  var diasVendas = parseFloat(sheetVendas.getRange('D1').getValue()) || 30;
+  if (diasVendas <= 0) diasVendas = 30;
+
+  var lista = [];
+  for (var j = 0; j < dadosVendas.length; j++) {
+    var nome = String(dadosVendas[j][0]).trim();
+    var qtd  = parseFloat(dadosVendas[j][1]) || 0;
+    if (!nome || nome.toLowerCase() === 'nome' || nome.toLowerCase() === 'medicamento') continue;
+    var media = Math.round((qtd / diasVendas) * 100) / 100;
+    lista.push({ medicamento: nome.toUpperCase(), totalVendido: qtd, mediaDiaria: media });
+  }
+
+  lista.sort(function(a, b) { return b.mediaDiaria - a.mediaDiaria; });
+
+  var itens = (top > 0) ? lista.slice(0, top) : lista;
+
+  return {
+    diasVendas: diasVendas,
+    totalItens: itens.length,
+    geradoEm:   new Date().toISOString(),
+    itens:      itens
+  };
 }
 
 // ─── Response helpers ─────────────────────────────────────────────────────────

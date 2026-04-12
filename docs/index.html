@@ -126,6 +126,66 @@
     </div>
   </div><!-- /steps -->
 
+  <!-- ─── Relatório Mais Vendidos ─────────────────────────────────────── -->
+  <section class="card" id="relatorioSection">
+    <div class="card-title">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+           stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="18" y1="20" x2="18" y2="10"/>
+        <line x1="12" y1="20" x2="12" y2="4"/>
+        <line x1="6"  y1="20" x2="6"  y2="14"/>
+      </svg>
+      Relatório de Itens Mais Vendidos
+    </div>
+
+    <p style="font-size:.85rem; color:#6b7280; margin-bottom:14px;">
+      Classifica todos os medicamentos do arquivo de vendas pela média diária, do mais vendido ao menos vendido.
+    </p>
+
+    <div class="action-row" style="margin-bottom:16px; align-items:center;">
+      <span style="font-size:.88rem; font-weight:600; white-space:nowrap;">Exibir top:</span>
+      <div class="period-group" id="topGroup">
+        <button class="period-btn top-btn active" data-top="10">Top 10</button>
+        <button class="period-btn top-btn" data-top="20">Top 20</button>
+        <button class="period-btn top-btn" data-top="50">Top 50</button>
+        <button class="period-btn top-btn" data-top="0">Todos</button>
+      </div>
+      <button id="btnRelatorio" class="btn btn-primary" disabled>
+        📊 Gerar Relatório
+      </button>
+    </div>
+
+    <!-- results -->
+    <div id="relatorioResultado" style="display:none;">
+      <div class="result-meta" id="relatorioMeta" style="margin-bottom:16px;"></div>
+
+      <div class="action-row" style="margin-bottom:14px;">
+        <button id="btnRelatorioPdf" class="btn btn-success btn-sm">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+            <polyline points="14 2 14 8 20 8"/>
+          </svg>
+          Exportar PDF
+        </button>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Medicamento</th>
+              <th>Total Vendido</th>
+              <th>Média Diária</th>
+            </tr>
+          </thead>
+          <tbody id="relatorioBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
   <!-- ─── Results ─────────────────────────────────────────────────────── -->
   <section id="resultSection" class="card">
     <div class="card-title">
