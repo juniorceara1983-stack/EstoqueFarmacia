@@ -15,7 +15,7 @@
 
 const CONFIG = {
   // Replace with your deployed Apps Script URL
-  APPS_SCRIPT_URL: 'https://script.google.com/macros/s/YOUR_DEPLOYMENT_ID/exec',
+  APPS_SCRIPT_URL: 'https://script.google.com/macros/s/AKfycbwzNr39q-mLc-FPuJRSVkEAjeQdsBbMUHp9laMXFBVthNJk6iZxZwo50gLlYLBCrI9pgg/exec',
 
   // Pharmacy name shown in the PDF header and WhatsApp message
   FARMACIA_NOME: 'Farmácia',
