@@ -102,6 +102,11 @@ function handleCsvFile(file, progressId, statusId, tipo, isVendas) {
   status.textContent = 'Lendo arquivo…';
 
   if (isXls) {
+    if (typeof XLSX === 'undefined') {
+      showToast('Erro: biblioteca XLS não carregou. Verifique sua conexão e recarregue a página.', 'error');
+      status.textContent = '❌ Biblioteca XLS indisponível.';
+      return;
+    }
     const reader = new FileReader();
     reader.onload = async (e) => {
       try {
