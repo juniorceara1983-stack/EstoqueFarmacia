@@ -220,7 +220,19 @@ tbody td:last-child { text-align: right; font-weight: 700; color: var(--primary)
 
 /* ── Responsive ── */
 @media (max-width: 600px) {
+  header { padding: 12px 14px; gap: 10px; }
+  header h1 { font-size: 1.05rem; }
+  header p  { font-size: .75rem; }
+  main { padding: 16px 12px 60px; }
   .steps { grid-template-columns: 1fr; }
+  .card { padding: 16px; }
   .action-row { flex-direction: column; }
   .btn { width: 100%; justify-content: center; }
+  .period-group { gap: 6px; }
+  .period-btn { min-width: 60px; padding: 8px 0; font-size: .88rem; }
+  .result-meta { gap: 10px; font-size: .8rem; }
+  thead th { padding: 8px 8px; font-size: .82rem; white-space: nowrap; }
+  tbody td { padding: 7px 8px; font-size: .82rem; }
+  /* Keep table scrollable on mobile */
+  .table-wrap { -webkit-overflow-scrolling: touch; }
 }
