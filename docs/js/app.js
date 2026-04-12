@@ -175,6 +175,38 @@ async function processRows(parsed, progressId, statusId, tipo, isVendas, status)
     return;
   }
 
+  // ── Sugestão de Compras format: one file populates both Estoque and Vendas ─
+  if (parsed.format === 'sugestao') {
+    const total = parsed.estoqueRows.length;
+    if (total === 0) {
+      status.textContent = '⚠️ Nenhum item encontrado no arquivo.';
+      showToast('O arquivo não contém dados válidos.', 'error');
+      return;
+    }
+
+    const otherProgressId = progressId === 'estoqueProgress' ? 'vendasProgress' : 'estoqueProgress';
+    status.textContent = `Sugestão de Compras detectada – ${total} itens (período: ${parsed.periodoDias} dias). Importando…`;
+    showProgress(progressId);
+    showProgress(otherProgressId);
+
+    try {
+      await uploadEmLotes(parsed.estoqueRows, 'Estoque', progressId, null);
+      $('estoqueStatus').textContent = `✅ ${total} itens de estoque importados!`;
+      state.estoqueCarregado = true;
+
+      await uploadEmLotes(parsed.vendasRows, 'Vendas', otherProgressId, parsed.periodoDias);
+      $('vendasStatus').textContent = `✅ ${total} itens de vendas importados (período: ${parsed.periodoDias} dias)!`;
+      state.vendasCarregadas = true;
+
+      updateCalcularBtn();
+      showToast(`Sugestão de Compras importada: ${total} itens (${parsed.periodoDias} dias).`, 'success');
+    } catch (err) {
+      status.textContent = `❌ Erro: ${err.message}`;
+      showToast(`Erro ao importar: ${err.message}`, 'error');
+    }
+    return;
+  }
+
   // ── NF or simple format: uses .rows ──────────────────────────────────────
   const rows = parsed.rows || [];
   if (rows.length === 0) {
@@ -209,8 +241,9 @@ async function processRows(parsed, progressId, statusId, tipo, isVendas, status)
 
 /** Returns true when a parsed result contains no usable rows. */
 function isParsedEmpty(parsed) {
-  if (parsed.format === 'vazio')  return true;
-  if (parsed.format === 'rede')   return parsed.estoqueRows.length === 0;
+  if (parsed.format === 'vazio')    return true;
+  if (parsed.format === 'rede')     return parsed.estoqueRows.length === 0;
+  if (parsed.format === 'sugestao') return parsed.estoqueRows.length === 0;
   return (parsed.rows || []).length === 0;
 }
 
@@ -270,9 +303,11 @@ function splitCsvLine(line, sep) {
 }
 
 /**
- * Inspects the first 10 rows to detect the file format, then parses accordingly.
+ * Inspects the first rows to detect the file format, then parses accordingly.
  *
  * Supported formats:
+ *   'sugestao'– DROGAMAIS "Sugestão de Compras" report.
+ *              → returns { format: 'sugestao', estoqueRows, vendasRows, periodoDias }
  *   'nf'     – Nota Fiscal / Invoice: columns Código, Descrição, QTD.
  *              → returns { format: 'nf', rows: [[nome, qtd], …] }
  *   'rede'   – Rede/Estoque report: columns Código, Nome, Estoq, Vend.
@@ -285,6 +320,15 @@ function splitCsvLine(line, sep) {
 function detectAndParseRows(allRows) {
   if (allRows.length === 0) return { format: 'vazio', rows: [] };
 
+  // Check first 15 rows for DROGAMAIS "Sugestão de Compras" report
+  for (let i = 0; i < Math.min(15, allRows.length); i++) {
+    const cells  = allRows[i].map((c) => String(c == null ? '' : c).trim());
+    const joined = cells.join('|').toUpperCase();
+    if (joined.includes('SUGEST') && joined.includes('COMPRAS')) {
+      return parseSugestaoRows(allRows);
+    }
+  }
+
   for (let i = 0; i < Math.min(10, allRows.length); i++) {
     const cells  = allRows[i].map((c) => String(c == null ? '' : c).trim());
     const joined = cells.join('|').toUpperCase();
@@ -292,6 +336,11 @@ function detectAndParseRows(allRows) {
     // Rede / stock-report format: header contains "ESTOQ" and "VEND"
     if (joined.includes('ESTOQ') && joined.includes('VEND')) {
       return parseRedeRows(allRows, i, cells);
+    }
+
+    // DROGAMAIS CSV estoque export: empty col 0+1, "Código" at col 2 (merged-cell artifact)
+    if (cells[0] === '' && cells[1] === '' && cells[2] && /C[ÓO]DIGO/i.test(cells[2])) {
+      return parseDrogamaisEstoqueRows(allRows, i);
     }
 
     // Nota Fiscal format: header contains ("CÓDIGO" or "CODIGO") and ("DESCRI" or "QTD")
@@ -368,6 +417,79 @@ function parseRedeRows(allRows, headerIdx, header) {
   }
 
   return { format: 'rede', estoqueRows, vendasRows };
+}
+
+/**
+ * Parses the DROGAMAIS CSV estoque export.
+ * When the original XLS (with merged cells) is saved as CSV, each merged column
+ * gains an extra empty padding column, shifting data positions:
+ *   col[1] = Código, col[3] = Descrição, col[12] = QTD.
+ */
+function parseDrogamaisEstoqueRows(allRows, headerIdx) {
+  const rows = [];
+  for (let i = headerIdx + 1; i < allRows.length; i++) {
+    const cells = allRows[i].map((c) => String(c == null ? '' : c).trim());
+    const code  = cells[1] || '';
+    const nome  = cells[3] || '';
+    const qtd   = parseFloat((cells[12] || '').replace(',', '.'));
+    if (!nome || !code || isNaN(qtd) || qtd <= 0 || isNaN(parseInt(code, 10))) continue;
+    rows.push([nome, qtd]);
+  }
+  return { format: 'nf', rows };
+}
+
+/**
+ * Parses the DROGAMAIS "Sugestão de Compras – Pelas Vendas no Período" report.
+ * Works for both CSV and XLS exports of this report.
+ *
+ * Column layout (0-indexed):
+ *   [2]  = Código (product code)
+ *   [3]  = Produto (product name)
+ *   [9]  = Saldo Estoque (current stock at branch)
+ *   [13] = Qtd. Vend. (qty sold during the report period)
+ *
+ * The sales period (in days) is extracted from the "Período:" date range in the
+ * report header so the daily average calculation is accurate.
+ *
+ * Returns separate arrays for estoque and vendas so both sheets can be populated
+ * from a single file.
+ */
+function parseSugestaoRows(allRows) {
+  // Extract the period length (days) from the date range in the report header
+  let periodoDias = 7;
+  for (let i = 0; i < Math.min(15, allRows.length); i++) {
+    const cells = allRows[i].map((c) => String(c == null ? '' : c).trim());
+    for (const cell of cells) {
+      const m = cell.match(/(\d{2})\/(\d{2})\/(\d{4}).*?(\d{2})\/(\d{2})\/(\d{4})/);
+      if (m) {
+        const d1   = new Date(+m[3], +m[2] - 1, +m[1]);
+        const d2   = new Date(+m[6], +m[5] - 1, +m[4]);
+        const diff = Math.round((d2 - d1) / 86400000);
+        if (diff > 0) { periodoDias = diff; break; }
+      }
+    }
+  }
+
+  const estoqueRows = [];
+  const vendasRows  = [];
+
+  for (let i = 0; i < allRows.length; i++) {
+    const cells = allRows[i].map((c) => String(c == null ? '' : c).trim());
+    const code  = cells[2] || '';
+    // Only process rows whose code column is a positive number (product rows)
+    if (!code || isNaN(parseFloat(code)) || parseFloat(code) <= 0) continue;
+
+    const nome = cells[3] || '';
+    if (!nome) continue;
+
+    const saldo   = parseFloat((cells[9]  || '0').replace(',', '.')) || 0;
+    const qtdVend = parseFloat((cells[13] || '0').replace(',', '.')) || 0;
+
+    estoqueRows.push([nome, Math.max(0, saldo)]); // clamp negative stock to 0
+    vendasRows.push([nome, qtdVend]);
+  }
+
+  return { format: 'sugestao', estoqueRows, vendasRows, periodoDias };
 }
 
 /**

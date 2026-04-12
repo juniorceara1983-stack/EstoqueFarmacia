@@ -18,7 +18,7 @@ const CONFIG = {
   APPS_SCRIPT_URL: 'https://script.google.com/macros/s/AKfycbwzNr39q-mLc-FPuJRSVkEAjeQdsBbMUHp9laMXFBVthNJk6iZxZwo50gLlYLBCrI9pgg/exec',
 
   // Pharmacy name shown in the PDF header and WhatsApp message
-  FARMACIA_NOME: 'Farmácia',
+  FARMACIA_NOME: 'DROGAMAIS – PARQUE SOLEDADE',
 
   // Batch size for CSV upload (rows per request – keeps requests under 6 MB)
   BATCH_SIZE: 200,
