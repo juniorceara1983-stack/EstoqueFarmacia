@@ -90,39 +90,94 @@ function setupDropzone(zoneId, inputId, progressId, statusId, tipo, isVendas) {
 
 /* ── CSV parsing and upload ──────────────────────────────────────────────── */
 function handleCsvFile(file, progressId, statusId, tipo, isVendas) {
-  if (!file.name.match(/\.(csv|txt)$/i)) {
-    showToast('Arquivo inválido. Use um arquivo CSV.', 'error');
+  const isXls = file.name.match(/\.xlsx?$/i);
+  const isCsv = file.name.match(/\.(csv|txt)$/i);
+
+  if (!isXls && !isCsv) {
+    showToast('Arquivo inválido. Use CSV, XLS ou XLSX.', 'error');
     return;
   }
 
   const status = $(statusId);
   status.textContent = 'Lendo arquivo…';
 
-  const reader = new FileReader();
-  reader.onload = async (e) => {
-    const rows = parseCsv(e.target.result);
-    if (rows.length === 0) {
-      status.textContent = '⚠️ Arquivo vazio ou sem dados.';
-      showToast('O arquivo não contém dados válidos.', 'error');
+  if (isXls) {
+    if (typeof XLSX === 'undefined') {
+      showToast('Erro: biblioteca XLS não carregou. Verifique sua conexão e recarregue a página.', 'error');
+      status.textContent = '❌ Biblioteca XLS indisponível.';
       return;
     }
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      try {
+        const data  = new Uint8Array(e.target.result);
+        const wb    = XLSX.read(data, { type: 'array' });
+        const ws    = wb.Sheets[wb.SheetNames[0]];
+        const rows  = parseXlsRows(ws);
+        if (rows.length === 0) {
+          status.textContent = '⚠️ Arquivo vazio ou sem dados.';
+          showToast('O arquivo não contém dados válidos.', 'error');
+          return;
+        }
+        await processRows(rows, progressId, statusId, tipo, isVendas, status);
+      } catch (err) {
+        status.textContent = `❌ Erro: ${err.message}`;
+        showToast(`Erro ao ler arquivo: ${err.message}`, 'error');
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  } else {
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      const rows = parseCsv(e.target.result);
+      if (rows.length === 0) {
+        status.textContent = '⚠️ Arquivo vazio ou sem dados.';
+        showToast('O arquivo não contém dados válidos.', 'error');
+        return;
+      }
+      await processRows(rows, progressId, statusId, tipo, isVendas, status);
+    };
+    reader.readAsText(file, 'UTF-8');
+  }
+}
 
-    status.textContent = `${rows.length} linhas encontradas. Enviando…`;
-    showProgress(progressId);
+async function processRows(rows, progressId, statusId, tipo, isVendas, status) {
+  status.textContent = `${rows.length} linhas encontradas. Enviando…`;
+  showProgress(progressId);
 
-    try {
-      await uploadEmLotes(rows, tipo, progressId, isVendas ? state.periodoSelecionado : null);
-      status.textContent = `✅ ${rows.length} itens importados com sucesso!`;
-      if (isVendas) state.vendasCarregadas = true;
-      else          state.estoqueCarregado = true;
-      updateCalcularBtn();
-      showToast(`${tipo} importado: ${rows.length} itens.`, 'success');
-    } catch (err) {
-      status.textContent = `❌ Erro: ${err.message}`;
-      showToast(`Erro ao importar ${tipo}: ${err.message}`, 'error');
-    }
-  };
-  reader.readAsText(file, 'UTF-8');
+  try {
+    await uploadEmLotes(rows, tipo, progressId, isVendas ? state.periodoSelecionado : null);
+    status.textContent = `✅ ${rows.length} itens importados com sucesso!`;
+    if (isVendas) state.vendasCarregadas = true;
+    else          state.estoqueCarregado = true;
+    updateCalcularBtn();
+    showToast(`${tipo} importado: ${rows.length} itens.`, 'success');
+  } catch (err) {
+    status.textContent = `❌ Erro: ${err.message}`;
+    showToast(`Erro ao importar ${tipo}: ${err.message}`, 'error');
+  }
+}
+
+/**
+ * Parses a SheetJS worksheet into an array of [name, qty] pairs.
+ * Reads the first two columns; skips header rows where column A is non-numeric text.
+ */
+function parseXlsRows(ws) {
+  const rows = [];
+  const ref  = ws['!ref'];
+  if (!ref) return rows;
+
+  const range = XLSX.utils.decode_range(ref);
+  for (let r = range.s.r; r <= range.e.r; r++) {
+    const cellA = ws[XLSX.utils.encode_cell({ r, c: 0 })];
+    const cellB = ws[XLSX.utils.encode_cell({ r, c: 1 })];
+    const nome  = cellA ? String(cellA.v).trim() : '';
+    const qtdRaw = cellB ? cellB.v : '';
+    const qtd   = parseFloat(String(qtdRaw).replace(',', '.'));
+    if (!nome || isNaN(qtd)) continue; // skip header or blank
+    rows.push([nome, qtd]);
+  }
+  return rows;
 }
 
 /**
