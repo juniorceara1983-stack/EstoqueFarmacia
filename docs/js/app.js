@@ -110,16 +110,16 @@ function handleCsvFile(file, progressId, statusId, tipo, isVendas) {
     const reader = new FileReader();
     reader.onload = async (e) => {
       try {
-        const data  = new Uint8Array(e.target.result);
-        const wb    = XLSX.read(data, { type: 'array' });
-        const ws    = wb.Sheets[wb.SheetNames[0]];
-        const rows  = parseXlsRows(ws);
-        if (rows.length === 0) {
+        const data   = new Uint8Array(e.target.result);
+        const wb     = XLSX.read(data, { type: 'array' });
+        const ws     = wb.Sheets[wb.SheetNames[0]];
+        const parsed = parseXlsRows(ws);
+        if (isParsedEmpty(parsed)) {
           status.textContent = '⚠️ Arquivo vazio ou sem dados.';
           showToast('O arquivo não contém dados válidos.', 'error');
           return;
         }
-        await processRows(rows, progressId, statusId, tipo, isVendas, status);
+        await processRows(parsed, progressId, statusId, tipo, isVendas, status);
       } catch (err) {
         status.textContent = `❌ Erro: ${err.message}`;
         showToast(`Erro ao ler arquivo: ${err.message}`, 'error');
@@ -129,73 +129,246 @@ function handleCsvFile(file, progressId, statusId, tipo, isVendas) {
   } else {
     const reader = new FileReader();
     reader.onload = async (e) => {
-      const rows = parseCsv(e.target.result);
-      if (rows.length === 0) {
+      const parsed = parseCsv(e.target.result);
+      if (isParsedEmpty(parsed)) {
         status.textContent = '⚠️ Arquivo vazio ou sem dados.';
         showToast('O arquivo não contém dados válidos.', 'error');
         return;
       }
-      await processRows(rows, progressId, statusId, tipo, isVendas, status);
+      await processRows(parsed, progressId, statusId, tipo, isVendas, status);
     };
     reader.readAsText(file, 'UTF-8');
   }
 }
 
-async function processRows(rows, progressId, statusId, tipo, isVendas, status) {
+async function processRows(parsed, progressId, statusId, tipo, isVendas, status) {
+  // ── Rede format: one file populates both Estoque and Vendas ──────────────
+  if (parsed.format === 'rede') {
+    const total = parsed.estoqueRows.length;
+    if (total === 0) {
+      status.textContent = '⚠️ Nenhum item encontrado no arquivo.';
+      showToast('O arquivo não contém dados válidos.', 'error');
+      return;
+    }
+
+    const otherProgressId = progressId === 'estoqueProgress' ? 'vendasProgress' : 'estoqueProgress';
+    status.textContent = `Formato Rede detectado – ${total} itens. Importando estoque e vendas…`;
+    showProgress(progressId);
+    showProgress(otherProgressId);
+
+    try {
+      await uploadEmLotes(parsed.estoqueRows, 'Estoque', progressId, null);
+      $('estoqueStatus').textContent = `✅ ${total} itens de estoque importados!`;
+      state.estoqueCarregado = true;
+
+      // Vendas period: 30 days (Vend. column represents monthly sales)
+      await uploadEmLotes(parsed.vendasRows, 'Vendas', otherProgressId, 30);
+      $('vendasStatus').textContent = `✅ ${total} itens de vendas importados (período: 30 dias)!`;
+      state.vendasCarregadas = true;
+
+      updateCalcularBtn();
+      showToast(`Arquivo de Rede importado: ${total} itens (estoque + vendas).`, 'success');
+    } catch (err) {
+      status.textContent = `❌ Erro: ${err.message}`;
+      showToast(`Erro ao importar: ${err.message}`, 'error');
+    }
+    return;
+  }
+
+  // ── NF or simple format: uses .rows ──────────────────────────────────────
+  const rows = parsed.rows || [];
+  if (rows.length === 0) {
+    status.textContent = '⚠️ Arquivo vazio ou sem dados.';
+    showToast('O arquivo não contém dados válidos.', 'error');
+    return;
+  }
+
+  // NF files always go to Estoque regardless of which dropzone was used
+  const tipoEfetivo      = parsed.format === 'nf' ? 'Estoque' : tipo;
+  const isVendasEfetivo  = tipoEfetivo !== 'Estoque';
+
+  if (parsed.format === 'nf' && isVendas) {
+    showToast('Nota Fiscal detectada: importada como Estoque.', 'success');
+  }
+
   status.textContent = `${rows.length} linhas encontradas. Enviando…`;
   showProgress(progressId);
 
   try {
-    await uploadEmLotes(rows, tipo, progressId, isVendas ? state.periodoSelecionado : null);
+    await uploadEmLotes(rows, tipoEfetivo, progressId, isVendasEfetivo ? state.periodoSelecionado : null);
     status.textContent = `✅ ${rows.length} itens importados com sucesso!`;
-    if (isVendas) state.vendasCarregadas = true;
-    else          state.estoqueCarregado = true;
+    if (isVendasEfetivo) state.vendasCarregadas = true;
+    else                 state.estoqueCarregado = true;
     updateCalcularBtn();
-    showToast(`${tipo} importado: ${rows.length} itens.`, 'success');
+    showToast(`${tipoEfetivo} importado: ${rows.length} itens.`, 'success');
   } catch (err) {
     status.textContent = `❌ Erro: ${err.message}`;
-    showToast(`Erro ao importar ${tipo}: ${err.message}`, 'error');
+    showToast(`Erro ao importar ${tipoEfetivo}: ${err.message}`, 'error');
   }
 }
 
+/** Returns true when a parsed result contains no usable rows. */
+function isParsedEmpty(parsed) {
+  if (parsed.format === 'vazio')  return true;
+  if (parsed.format === 'rede')   return parsed.estoqueRows.length === 0;
+  return (parsed.rows || []).length === 0;
+}
+
 /**
- * Parses a SheetJS worksheet into an array of [name, qty] pairs.
- * Reads the first two columns; skips header rows where column A is non-numeric text.
+ * Parses a SheetJS worksheet, auto-detecting the file format.
+ * See detectAndParseRows() for supported formats.
  */
 function parseXlsRows(ws) {
-  const rows = [];
-  const ref  = ws['!ref'];
-  if (!ref) return rows;
+  const ref = ws['!ref'];
+  if (!ref) return { format: 'vazio', rows: [] };
 
-  const range = XLSX.utils.decode_range(ref);
+  const range   = XLSX.utils.decode_range(ref);
+  const allRows = [];
   for (let r = range.s.r; r <= range.e.r; r++) {
-    const cellA = ws[XLSX.utils.encode_cell({ r, c: 0 })];
-    const cellB = ws[XLSX.utils.encode_cell({ r, c: 1 })];
-    const nome  = cellA ? String(cellA.v).trim() : '';
-    const qtdRaw = cellB ? cellB.v : '';
-    const qtd   = parseFloat(String(qtdRaw).replace(',', '.'));
-    if (!nome || isNaN(qtd)) continue; // skip header or blank
-    rows.push([nome, qtd]);
+    const row = [];
+    for (let c = range.s.c; c <= range.e.c; c++) {
+      const cell = ws[XLSX.utils.encode_cell({ r, c })];
+      row.push(cell ? cell.v : '');
+    }
+    allRows.push(row);
   }
-  return rows;
+  return detectAndParseRows(allRows);
 }
 
 /**
- * Parses a CSV string into an array of [name, qty] pairs.
- * Handles semicolons and commas as delimiters.
- * Skips header row if first column is non-numeric text (e.g. "Medicamento").
+ * Parses a CSV text, auto-detecting the file format (NF, Rede, or simple 2-column).
+ * See detectAndParseRows() for supported formats.
  */
 function parseCsv(text) {
-  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-  const sep   = lines[0].includes(';') ? ';' : ',';
-  const rows  = [];
+  const lines   = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const sep     = lines[0]?.includes(';') ? ';' : ',';
+  const allRows = lines.map((line) => splitCsvLine(line, sep));
+  return detectAndParseRows(allRows);
+}
 
-  for (const line of lines) {
-    const parts = line.split(sep);
-    const nome  = (parts[0] || '').replace(/^"|"$/g, '').trim();
-    const qtdRaw = (parts[1] || '').replace(/^"|"$/g, '').replace(',', '.').trim();
-    const qtd   = parseFloat(qtdRaw);
-    if (!nome || isNaN(qtd)) continue; // skip header or blank
+/**
+ * Splits a single CSV line, respecting double-quoted fields.
+ */
+function splitCsvLine(line, sep) {
+  const result = [];
+  let cur = '';
+  let inQ = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"')            { inQ = !inQ; }
+    else if (ch === sep && !inQ) { result.push(cur); cur = ''; }
+    else                       { cur += ch; }
+  }
+  result.push(cur);
+  return result;
+}
+
+/**
+ * Inspects the first 10 rows to detect the file format, then parses accordingly.
+ *
+ * Supported formats:
+ *   'nf'     – Nota Fiscal / Invoice: columns Código, Descrição, QTD.
+ *              → returns { format: 'nf', rows: [[nome, qtd], …] }
+ *   'rede'   – Rede/Estoque report: columns Código, Nome, Estoq, Vend.
+ *              → returns { format: 'rede', estoqueRows: […], vendasRows: […] }
+ *   'simples'– Plain 2-column file (col A = name, col B = qty)
+ *              → returns { format: 'simples', rows: [[nome, qtd], …] }
+ *   'vazio'  – No data found
+ *              → returns { format: 'vazio', rows: [] }
+ */
+function detectAndParseRows(allRows) {
+  if (allRows.length === 0) return { format: 'vazio', rows: [] };
+
+  for (let i = 0; i < Math.min(10, allRows.length); i++) {
+    const cells  = allRows[i].map((c) => String(c == null ? '' : c).trim());
+    const joined = cells.join('|').toUpperCase();
+
+    // Rede / stock-report format: header contains "ESTOQ" and "VEND"
+    if (joined.includes('ESTOQ') && joined.includes('VEND')) {
+      return parseRedeRows(allRows, i, cells);
+    }
+
+    // Nota Fiscal format: header contains ("CÓDIGO" or "CODIGO") and ("DESCRI" or "QTD")
+    if ((joined.includes('C\u00d3DIGO') || joined.includes('CODIGO')) &&
+        (joined.includes('DESCRI') || joined.includes('QTD'))) {
+      return parseNFRows(allRows, i, cells);
+    }
+  }
+
+  return { format: 'simples', rows: parseSimpleRows(allRows) };
+}
+
+/**
+ * Parses a Nota Fiscal file.
+ * Extracts the Descrição column (medicine name) and the QTD. column (quantity).
+ */
+function parseNFRows(allRows, headerIdx, header) {
+  const descIdx = header.findIndex((h) => /DESCRI/i.test(h));
+  const qtdIdx  = header.findIndex((h) => /^QTD\.?$/i.test(h.trim()));
+
+  if (descIdx < 0 || qtdIdx < 0) {
+    return { format: 'simples', rows: parseSimpleRows(allRows) };
+  }
+
+  const rows = [];
+  for (let i = headerIdx + 1; i < allRows.length; i++) {
+    const cells = allRows[i].map((c) => String(c == null ? '' : c).trim());
+    const nome  = cells[descIdx] || '';
+    const qtd   = parseFloat((cells[qtdIdx] || '').replace(',', '.'));
+    if (!nome || isNaN(qtd) || qtd <= 0) continue;
+    rows.push([nome, qtd]);
+  }
+  return { format: 'nf', rows };
+}
+
+/**
+ * Parses a Rede / Estoque report file.
+ * In this format the code is fixed at column 2 and the medicine name at column 3
+ * (these columns have no header label). Estoque and Vend. are located by header name.
+ * Returns separate arrays for estoque and vendas so both sheets can be populated at once.
+ * The vendas period is assumed to be 30 days (one month).
+ */
+function parseRedeRows(allRows, headerIdx, header) {
+  const codeIdx  = 2;
+  const nomeIdx  = 3;
+  const estoqIdx = header.findIndex((h) => /ESTOQ/i.test(h));
+  const vendIdx  = header.findIndex((h) => /^VEND\.?$/i.test(h.trim()));
+
+  if (estoqIdx < 0 || vendIdx < 0) {
+    return { format: 'simples', rows: parseSimpleRows(allRows) };
+  }
+
+  const estoqueRows = [];
+  const vendasRows  = [];
+
+  for (let i = headerIdx + 1; i < allRows.length; i++) {
+    const cells = allRows[i].map((c) => String(c == null ? '' : c).trim());
+    const code  = cells[codeIdx] || '';
+    const nome  = cells[nomeIdx] || '';
+
+    // Skip branch/group header rows and blank rows (code is not a number)
+    if (!nome || !code || isNaN(parseInt(code, 10))) continue;
+
+    const estoq = parseFloat((cells[estoqIdx] || '0').replace(',', '.')) || 0;
+    const vend  = parseFloat((cells[vendIdx]  || '0').replace(',', '.')) || 0;
+
+    estoqueRows.push([nome, estoq]);
+    vendasRows.push([nome, vend]);
+  }
+
+  return { format: 'rede', estoqueRows, vendasRows };
+}
+
+/**
+ * Plain 2-column fallback parser: col A = name, col B = quantity.
+ */
+function parseSimpleRows(allRows) {
+  const rows = [];
+  for (const row of allRows) {
+    const nome   = String(row[0] == null ? '' : row[0]).trim().replace(/^"|"$/g, '');
+    const qtdRaw = String(row[1] == null ? '' : row[1]).trim().replace(/^"|"$/g, '').replace(',', '.');
+    const qtd    = parseFloat(qtdRaw);
+    if (!nome || isNaN(qtd)) continue;
     rows.push([nome, qtd]);
   }
   return rows;
