@@ -21,6 +21,12 @@ const state = {
   validadeDias: 60,
   validadeItens: null,
   validadeResultado: null,
+  // Local data for in-browser calculation (avoids backend round-trip and
+  // order-of-upload issues with Google Sheets).
+  estoqueLocal: null,        // [[nome, qtd], …]
+  vendasLocal: null,         // [[nome, qtd], …]
+  diasVendasLocal: 7,
+  estoqueVemSugestao: false, // true when stock came from a sugestão/rede file
 };
 
 /* ── DOM refs ────────────────────────────────────────────────────────────── */
@@ -163,6 +169,15 @@ async function processRows(parsed, progressId, statusId, tipo, isVendas, status)
       return;
     }
 
+    // Store locally – rede file is authoritative for both stock and sales
+    state.estoqueLocal       = parsed.estoqueRows.slice();
+    state.vendasLocal        = parsed.vendasRows.slice();
+    state.diasVendasLocal    = 30; // Vend. column represents monthly sales
+    state.estoqueVemSugestao = true;
+    state.estoqueCarregado   = true;
+    state.vendasCarregadas   = true;
+    updateCalcularBtn();
+
     const otherProgressId = progressId === 'estoqueProgress' ? 'vendasProgress' : 'estoqueProgress';
     status.textContent = `Formato Rede detectado – ${total} itens. Importando estoque e vendas…`;
     showProgress(progressId);
@@ -171,18 +186,15 @@ async function processRows(parsed, progressId, statusId, tipo, isVendas, status)
     try {
       await uploadEmLotes(parsed.estoqueRows, 'Estoque', progressId, null);
       $('estoqueStatus').textContent = `✅ ${total} itens de estoque importados!`;
-      state.estoqueCarregado = true;
 
       // Vendas period: 30 days (Vend. column represents monthly sales)
       await uploadEmLotes(parsed.vendasRows, 'Vendas', otherProgressId, 30);
       $('vendasStatus').textContent = `✅ ${total} itens de vendas importados (período: 30 dias)!`;
-      state.vendasCarregadas = true;
 
-      updateCalcularBtn();
       showToast(`Arquivo de Rede importado: ${total} itens (estoque + vendas).`, 'success');
     } catch (err) {
-      status.textContent = `❌ Erro: ${err.message}`;
-      showToast(`Erro ao importar: ${err.message}`, 'error');
+      status.textContent = `❌ Erro ao enviar ao servidor: ${err.message}`;
+      showToast(`Arquivo carregado localmente. Erro ao sincronizar com servidor: ${err.message}`, 'error');
     }
     return;
   }
@@ -196,6 +208,16 @@ async function processRows(parsed, progressId, statusId, tipo, isVendas, status)
       return;
     }
 
+    // Store locally – sugestão is authoritative for both stock and sales.
+    // The "Estoq" column in the sugestão is the definitive current-stock source.
+    state.estoqueLocal       = parsed.estoqueRows.slice();
+    state.vendasLocal        = parsed.vendasRows.slice();
+    state.diasVendasLocal    = parsed.periodoDias;
+    state.estoqueVemSugestao = true;
+    state.estoqueCarregado   = true;
+    state.vendasCarregadas   = true;
+    updateCalcularBtn();
+
     const otherProgressId = progressId === 'estoqueProgress' ? 'vendasProgress' : 'estoqueProgress';
     status.textContent = `Sugestão de Compras detectada – ${total} itens (período: ${parsed.periodoDias} dias). Importando…`;
     showProgress(progressId);
@@ -204,17 +226,14 @@ async function processRows(parsed, progressId, statusId, tipo, isVendas, status)
     try {
       await uploadEmLotes(parsed.estoqueRows, 'Estoque', progressId, null);
       $('estoqueStatus').textContent = `✅ ${total} itens de estoque importados!`;
-      state.estoqueCarregado = true;
 
       await uploadEmLotes(parsed.vendasRows, 'Vendas', otherProgressId, parsed.periodoDias);
       $('vendasStatus').textContent = `✅ ${total} itens de vendas importados (período: ${parsed.periodoDias} dias)!`;
-      state.vendasCarregadas = true;
 
-      updateCalcularBtn();
       showToast(`Sugestão de Compras importada: ${total} itens (${parsed.periodoDias} dias).`, 'success');
     } catch (err) {
-      status.textContent = `❌ Erro: ${err.message}`;
-      showToast(`Erro ao importar: ${err.message}`, 'error');
+      status.textContent = `❌ Erro ao enviar ao servidor: ${err.message}`;
+      showToast(`Arquivo carregado localmente. Erro ao sincronizar com servidor: ${err.message}`, 'error');
     }
     return;
   }
@@ -235,19 +254,31 @@ async function processRows(parsed, progressId, statusId, tipo, isVendas, status)
     showToast('Nota Fiscal detectada: importada como Estoque.', 'success');
   }
 
+  // Store locally.
+  // NF files carry delivery quantities, not the live stock balance.
+  // Only use them for stock if no authoritative sugestão data is present yet.
+  if (!isVendasEfetivo) {
+    if (!state.estoqueVemSugestao) {
+      state.estoqueLocal = rows.slice();
+    }
+    state.estoqueCarregado = true;
+  } else {
+    state.vendasLocal     = rows.slice();
+    state.diasVendasLocal = state.periodoSelecionado;
+    state.vendasCarregadas = true;
+  }
+  updateCalcularBtn();
+
   status.textContent = `${rows.length} linhas encontradas. Enviando…`;
   showProgress(progressId);
 
   try {
     await uploadEmLotes(rows, tipoEfetivo, progressId, isVendasEfetivo ? state.periodoSelecionado : null);
     status.textContent = `✅ ${rows.length} itens importados com sucesso!`;
-    if (isVendasEfetivo) state.vendasCarregadas = true;
-    else                 state.estoqueCarregado = true;
-    updateCalcularBtn();
     showToast(`${tipoEfetivo} importado: ${rows.length} itens.`, 'success');
   } catch (err) {
-    status.textContent = `❌ Erro: ${err.message}`;
-    showToast(`Erro ao importar ${tipoEfetivo}: ${err.message}`, 'error');
+    status.textContent = `❌ Erro ao enviar ao servidor: ${err.message}`;
+    showToast(`Arquivo carregado localmente. Erro ao sincronizar com servidor: ${err.message}`, 'error');
   }
 }
 
@@ -584,6 +615,67 @@ async function uploadEmLotes(rows, tipo, progressId, periodo) {
   }
 }
 
+/* ── Local calculation ───────────────────────────────────────────────────── */
+/**
+ * Mirrors the backend calcularNecessidade() logic entirely in the browser.
+ * Uses the data already parsed from the uploaded files (state.estoqueLocal /
+ * state.vendasLocal) so the result is always consistent with what was uploaded,
+ * regardless of the order the files were dropped or whether the backend is
+ * reachable.
+ *
+ * Stock check:
+ *   mediaDiaria  = vendasTotais / diasVendas
+ *   projecao     = mediaDiaria × diasCobertura
+ *   necessidade  = projecao − estoqueAtual
+ *   → included only when necessidade > 0 (stock is insufficient for the period)
+ *
+ * @param {number} diasCobertura  Number of days to cover.
+ * @returns {Object}  Same shape as the backend response.
+ */
+function calcularLocal(diasCobertura) {
+  // Build estoque map: NOME_UPPER → qty
+  const mapaEstoque = {};
+  if (state.estoqueLocal) {
+    state.estoqueLocal.forEach(([nome, qtd]) => {
+      const chave = String(nome == null ? '' : nome).trim().toUpperCase();
+      if (chave) mapaEstoque[chave] = Number(qtd) || 0;
+    });
+  }
+
+  const diasVendas = state.diasVendasLocal || 7;
+  const lista = [];
+
+  (state.vendasLocal || []).forEach(([nome, vendasTotais]) => {
+    const chave      = String(nome == null ? '' : nome).trim().toUpperCase();
+    if (!chave) return;
+    const estoqueAtual = mapaEstoque[chave] ?? 0;
+    const vendas       = Number(vendasTotais) || 0;
+    const mediaDiaria  = vendas / diasVendas;
+    const projecao     = mediaDiaria * diasCobertura;
+    const necessidade  = projecao - estoqueAtual;
+
+    if (necessidade > 0) {
+      lista.push({
+        medicamento:  chave,
+        estoqueAtual: estoqueAtual,
+        mediaDiaria:  Math.round(mediaDiaria * 100) / 100,
+        projecao:     Math.round(projecao * 10) / 10,
+        comprar:      Math.ceil(necessidade),
+      });
+    }
+  });
+
+  lista.sort((a, b) => b.comprar - a.comprar);
+
+  return {
+    diasCobertura,
+    diasVendas,
+    totalItens: lista.length,
+    geradoEm:   new Date().toISOString(),
+    itens:      lista,
+  };
+}
+
 /* ── Calculate purchase list ─────────────────────────────────────────────── */
 async function calcular() {
   const btn = $('btnCalcular');
@@ -593,6 +685,17 @@ async function calcular() {
   $('resultSection').style.display = 'none';
 
   try {
+    // Prefer local calculation: faster, always uses the correct stock values
+    // from the uploaded file's "Estoq" column, regardless of upload order.
+    if (state.vendasLocal && state.vendasLocal.length > 0) {
+      const resultado = calcularLocal(state.periodoSelecionado);
+      state.resultado = resultado;
+      renderResultado(resultado);
+      showToast(`Lista gerada: ${resultado.totalItens} item(s) para comprar.`, 'success');
+      return;
+    }
+
+    // Fallback: call the Apps Script backend (requires prior upload to succeed)
     const url  = `${CONFIG.APPS_SCRIPT_URL}?action=calcular&dias=${state.periodoSelecionado}`;
     const resp = await fetchGet(url);
 
@@ -780,6 +883,26 @@ async function gerarRelatorio() {
   btn.innerHTML = '<span class="spinner"></span> Gerando…';
 
   try {
+    // Prefer local data when available
+    if (state.vendasLocal && state.vendasLocal.length > 0) {
+      const diasVendas = state.diasVendasLocal || 7;
+      let lista = state.vendasLocal.map(([nome, qtd]) => {
+        const total = Number(qtd) || 0;
+        const media = Math.round((total / diasVendas) * 100) / 100;
+        return { medicamento: String(nome).trim().toUpperCase(), totalVendido: total, mediaDiaria: media };
+      });
+      lista = lista.filter((i) => i.totalVendido > 0);
+      lista.sort((a, b) => b.mediaDiaria - a.mediaDiaria);
+      const top  = state.topSelecionado;
+      const itens = top > 0 ? lista.slice(0, top) : lista;
+      const data = { diasVendas, totalItens: itens.length, geradoEm: new Date().toISOString(), itens };
+      state.relatorio = data;
+      renderRelatorio(data);
+      showToast(`Relatório gerado: ${data.totalItens} item(s).`, 'success');
+      return;
+    }
+
+    // Fallback: call the Apps Script backend
     const url  = `${CONFIG.APPS_SCRIPT_URL}?action=relatorio&top=${state.topSelecionado}`;
     const resp = await fetchGet(url);
     if (!resp.ok) throw new Error(resp.error || 'Erro ao gerar relatório.');
