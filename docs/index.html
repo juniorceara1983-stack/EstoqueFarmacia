@@ -199,7 +199,13 @@
     <div class="result-meta">
       <span>Cobertura: <strong><span id="metaDias">–</span> dias</strong></span>
       <span>Itens para comprar: <strong><span id="metaTotal">–</span></strong></span>
+      <span>Valor total estimado: <strong><span id="metaValorTotal">–</span></strong></span>
       <span>Gerado em: <strong><span id="metaGerado">–</span></strong></span>
+    </div>
+
+    <div class="action-row" style="margin-bottom:8px;">
+      <button id="btnSelecionarTodos" class="btn btn-outline btn-sm">☑ Selecionar Todos</button>
+      <button id="btnDesmarcarTodos" class="btn btn-outline btn-sm">☐ Desmarcar Todos</button>
     </div>
 
     <div class="action-row" style="margin-bottom:16px;">
@@ -243,125 +249,20 @@
       <table>
         <thead>
           <tr>
+            <th class="col-check">✓</th>
             <th>#</th>
             <th>Cód. / Medicamento</th>
             <th>Estoque Atual</th>
             <th>Média Diária</th>
             <th>Projeção</th>
             <th>Comprar</th>
+            <th>Vlr Unit.</th>
+            <th>Valor Est.</th>
           </tr>
         </thead>
         <tbody id="tabelaBody"></tbody>
+        <tfoot id="tabelaFoot"></tfoot>
       </table>
-    </div>
-  </section>
-
-  <!-- ─── Validades ──────────────────────────────────────────────────────── -->
-  <section class="card" id="validadeSection">
-    <div class="card-title">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-           stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <circle cx="12" cy="12" r="10"/>
-        <polyline points="12 6 12 12 16 14"/>
-      </svg>
-      Verificar Validades
-    </div>
-
-    <p style="font-size:.85rem; color:#6b7280; margin-bottom:14px;">
-      Importe um arquivo com informações de validade para identificar produtos vencidos ou próximos do vencimento.
-      O arquivo deve conter colunas como: <em>Código, Produto, Lote, Validade, Qtd</em> (ou similar).
-    </p>
-
-    <label class="dropzone" id="validadeDropzone">
-      <input type="file" id="validadeCsvInput" accept=".csv,.txt,.xls,.xlsx,text/csv,text/plain,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
-      <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-           stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-        <polyline points="14 2 14 8 20 8"/>
-      </svg>
-      <strong>Arraste o arquivo de Validades aqui</strong>
-      ou clique/toque para selecionar<br>
-      <small>Formatos: CSV ou XLS &nbsp;|&nbsp; Precisa ter colunas de produto e validade (DD/MM/YYYY ou MM/YYYY)</small>
-    </label>
-
-    <p id="validadeStatus" style="margin-top:10px; font-size:.85rem; color:#6b7280;"></p>
-
-    <div style="margin-top:16px;">
-      <span style="font-size:.88rem; font-weight:600;">Alertar produtos que vencem em até:</span>
-      <div class="period-group" style="margin-top:10px;" id="validadePeriodGroup">
-        <button class="period-btn vld-btn" data-dias="30">30 dias</button>
-        <button class="period-btn vld-btn active" data-dias="60">60 dias</button>
-        <button class="period-btn vld-btn" data-dias="90">90 dias</button>
-        <button class="period-btn vld-btn" data-dias="180">180 dias</button>
-      </div>
-    </div>
-  </section>
-
-  <!-- ─── Resultado Validades ─────────────────────────────────────────────── -->
-  <section id="validadeResultSection" class="card" style="display:none;">
-    <div class="card-title">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-           stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
-        <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
-      </svg>
-      Relatório de Validades
-    </div>
-
-    <div class="result-meta" id="validadeMeta" style="margin-bottom:16px;"></div>
-
-    <div class="action-row" style="margin-bottom:16px;">
-      <button id="btnValidadePdf" class="btn btn-success">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-             stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-          <polyline points="14 2 14 8 20 8"/>
-        </svg>
-        Exportar PDF
-      </button>
-    </div>
-
-    <!-- Vencidos -->
-    <div id="vencidosWrap" style="margin-bottom:24px; display:none;">
-      <h3 style="font-size:.95rem; font-weight:700; color:var(--danger); margin-bottom:10px;">
-        🔴 Produtos Vencidos
-      </h3>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>#</th><th>Cód. / Produto</th><th>Lote</th><th>Validade</th><th>Qtd</th><th>Vencido há</th>
-            </tr>
-          </thead>
-          <tbody id="vencidosBody"></tbody>
-        </table>
-      </div>
-    </div>
-
-    <!-- Próximos a vencer -->
-    <div id="proxVencerWrap" style="display:none;">
-      <h3 style="font-size:.95rem; font-weight:700; color:var(--warning); margin-bottom:10px;">
-        🟡 Próximos a Vencer
-      </h3>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>#</th><th>Cód. / Produto</th><th>Lote</th><th>Validade</th><th>Qtd</th><th>Vence em</th>
-            </tr>
-          </thead>
-          <tbody id="proxVencerBody"></tbody>
-        </table>
-      </div>
-    </div>
-
-    <div id="validadeEmpty" class="empty-state" style="display:none;">
-      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-           stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
-        <polyline points="22 4 12 14.01 9 11.01"/>
-      </svg>
-      <p>🎉 Nenhum produto vencido ou próximo do vencimento encontrado!</p>
     </div>
   </section>
 
