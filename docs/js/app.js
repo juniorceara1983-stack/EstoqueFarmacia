@@ -791,10 +791,12 @@ function renderResultado(data) {
         ${fmtBrl(data.valorTotal)}
       </td>`;
     tfoot.appendChild(tr);
-
-    // Update total when checkboxes change
-    tbody.addEventListener('change', atualizarTotalSelecionados);
   }
+
+  // Use single delegated listener on tabelaWrap so it survives table re-renders
+  const wrap = $('tabelaWrap');
+  wrap.removeEventListener('change', atualizarTotalSelecionados);
+  wrap.addEventListener('change', atualizarTotalSelecionados);
 }
 
 function atualizarTotalSelecionados() {
@@ -907,7 +909,10 @@ function exportarPdf() {
   doc.setFont('helvetica', 'normal');
   y += 6;
 
-  // Rows
+  // Rows – max product name characters differ based on whether price cols are shown
+  // (37 chars with price cols, 48 without, both avoiding overflow in 8pt font)
+  const MAX_NOME_COM_PRECO    = 37;
+  const MAX_NOME_SEM_PRECO    = 48;
   let totalValor = 0;
   itensSelecionados.forEach((item, idx) => {
     if (y > 275) {
@@ -919,7 +924,7 @@ function exportarPdf() {
       doc.rect(10, y - 4, 190, 7, 'F');
     }
     x = 14;
-    const maxNome = temPrecos ? 37 : 48;
+    const maxNome = temPrecos ? MAX_NOME_COM_PRECO : MAX_NOME_SEM_PRECO;
     const row = [
       String(idx + 1),
       item.medicamento.length > maxNome ? item.medicamento.substring(0, maxNome - 2) + '…' : item.medicamento,
