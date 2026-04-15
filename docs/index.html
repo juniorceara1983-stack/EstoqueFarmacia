@@ -3,16 +3,26 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>EstoqueFarmácia – Lista de Compras</title>
+  <title>DROGAMAIS – Estoque Farmácia</title>
   <link rel="stylesheet" href="css/style.css">
   <link rel="manifest" href="manifest.json">
   <link rel="apple-touch-icon" href="icons/icon-512.png">
   <meta name="theme-color" content="#16a05a">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-title" content="Estoque">
+  <meta name="apple-mobile-web-app-title" content="DROGAMAIS">
 </head>
 <body>
+
+<!-- ─── Splash Screen ──────────────────────────────────────────────────────── -->
+<div id="splashScreen" class="splash">
+  <img src="icons/icon-512.png" alt="DROGAMAIS" class="splash-logo">
+  <div class="splash-name">DROGAMAIS</div>
+  <div class="splash-sub">Estoque &amp; Lista de Compras</div>
+  <div class="splash-dots">
+    <span></span><span></span><span></span>
+  </div>
+</div>
 
 <!-- ─── Header ──────────────────────────────────────────────────────────── -->
 <header>
@@ -295,6 +305,21 @@
         .catch(function(err){ console.warn('SW registration failed:', err); });
     });
   }
+</script>
+<script>
+  (function () {
+    var splash = document.getElementById('splashScreen');
+    function hideSplash() {
+      splash.classList.add('splash-hide');
+      splash.addEventListener('transitionend', function () {
+        splash.style.display = 'none';
+      }, { once: true });
+    }
+    // Show splash for at least 2.2 s, then fade out
+    window.addEventListener('load', function () {
+      setTimeout(hideSplash, 2200);
+    });
+  })();
 </script>
 </body>
 </html>

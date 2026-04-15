@@ -1,6 +1,6 @@
 {
-  "name": "EstoqueFarmácia – Lista de Compras",
-  "short_name": "Estoque",
+  "name": "DROGAMAIS – Estoque Farmácia",
+  "short_name": "DROGAMAIS",
   "description": "Gerador de lista de compras com base em estoque e histórico de vendas",
   "start_url": "./index.html",
   "id": "estoque-farmacia",
@@ -8,7 +8,7 @@
   "display": "standalone",
   "orientation": "portrait-primary",
   "theme_color": "#16a05a",
-  "background_color": "#ffffff",
+  "background_color": "#16a05a",
   "lang": "pt-BR",
   "icons": [
     {
