@@ -7,7 +7,7 @@
  *  2. User uploads CSV for "Vendas"  → same
  *  3. User picks coverage period (7 / 14 / 28 days)
  *  4. User clicks "Calcular" → GET request to Apps Script → renders table
- *  5. Export to PDF (jsPDF) or share via WhatsApp
+ *  5. Export to PDF (window.open + print) or share via WhatsApp
  */
 
 /* ── State ──────────────────────────────────────────────────────────────── */
@@ -824,151 +824,110 @@ function getItensSelecionados() {
   return state.resultado.itens.filter((_, idx) => checks[idx] && checks[idx].checked);
 }
 
-/* ── PDF download helper (cross-device) ──────────────────────────────────── */
+/* ── PDF helpers (window.open + print – same approach as ECC) ─────────────── */
 /**
- * Saves a jsPDF document.
- * Uses a blob URL + hidden anchor trick so the download works on both desktop
- * and mobile browsers (including iOS Safari which ignores the `download` attr
- * but can open a blob in a new tab where the user can then share/save the PDF).
+ * Opens a new window with the given HTML and triggers the browser print dialog
+ * (which lets the user save as PDF). This approach is CDN-independent and works
+ * reliably on all browsers and mobile devices, exactly as in the ECC system.
  */
-function downloadPdf(doc, filename) {
-  try {
-    const blob = doc.output('blob');
-    const url  = URL.createObjectURL(blob);
-    const a    = document.createElement('a');
-    a.href     = url;
-    a.download = filename;
-    a.target   = '_blank';
-    a.rel      = 'noopener';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    // Release the object URL after a short delay to allow the download to start
-    setTimeout(() => URL.revokeObjectURL(url), 500);
-  } catch (e) {
-    // Fallback: use jsPDF built-in save (works on most desktop browsers)
-    doc.save(filename);
+function _abrirJanelaPdf(html) {
+  const win = window.open('', '_blank');
+  if (!win) {
+    showToast('Permita janelas pop-up para gerar o PDF.', 'error');
+    return false;
   }
+  win.document.write(html);
+  win.document.close();
+  win.focus();
+  // Give the browser time to render the document before opening the print dialog
+  setTimeout(() => win.print(), 400);
+  return true;
 }
 
 /* ── PDF export ──────────────────────────────────────────────────────────── */
 function exportarPdf() {
   if (!state.resultado) return;
-  if (typeof window.jspdf === 'undefined' || typeof window.jspdf.jsPDF === 'undefined') {
-    showToast('Biblioteca de PDF não carregou. Verifique sua conexão e recarregue a página.', 'error');
-    return;
-  }
   const itensSelecionados = getItensSelecionados();
   if (itensSelecionados.length === 0) {
     showToast('Nenhum item selecionado. Marque pelo menos um item para exportar.', 'error');
     return;
   }
-  try {
-  const { jsPDF } = window.jspdf;
-  const doc  = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
-  const data = state.resultado;
+  const data    = state.resultado;
   const farmacia = CONFIG.FARMACIA_NOME;
-  const hoje = new Date().toLocaleDateString('pt-BR');
+  const hoje    = new Date().toLocaleDateString('pt-BR');
   const temPrecos = itensSelecionados.some((i) => i.precoUnitario > 0);
 
-  // Header
-  doc.setFillColor(26, 111, 196);
-  doc.rect(0, 0, 210, 28, 'F');
-  doc.setTextColor(255, 255, 255);
-  doc.setFontSize(16);
-  doc.setFont('helvetica', 'bold');
-  doc.text(farmacia, 14, 12);
-  doc.setFontSize(10);
-  doc.setFont('helvetica', 'normal');
-  doc.text(`Sugestão de Compra – Cobertura: ${data.diasCobertura} dias`, 14, 20);
-  doc.text(`Gerado em: ${hoje}`, 155, 20);
-
-  // Table
-  doc.setTextColor(0, 0, 0);
-  doc.setFontSize(8);
-
-  let cols, widths;
+  let cols, colWidths;
   if (temPrecos) {
-    cols   = ['#', 'Cód. / Medicamento', 'Estoque', 'Média/dia', 'Projeção', 'Comprar', 'Vlr Unit.', 'Valor Est.'];
-    widths = [8, 67, 16, 18, 17, 15, 24, 25];
+    cols      = ['#', 'Cód. / Medicamento', 'Estoque', 'Média/dia', 'Projeção', 'Comprar', 'Vlr Unit.', 'Valor Est.'];
+    colWidths = ['3%', '35%', '8%', '10%', '10%', '8%', '12%', '14%'];
   } else {
-    cols   = ['#', 'Cód. / Medicamento', 'Estoque', 'Média/dia', 'Projeção', 'Comprar'];
-    widths = [8, 90, 18, 22, 22, 17];
+    cols      = ['#', 'Cód. / Medicamento', 'Estoque', 'Média/dia', 'Projeção', 'Comprar'];
+    colWidths = ['3%', '47%', '10%', '13%', '13%', '14%'];
   }
-  let y = 36;
 
-  // Column headers
-  doc.setFont('helvetica', 'bold');
-  doc.setFillColor(230, 238, 255);
-  doc.rect(10, y - 5, 190, 8, 'F');
-  let x = 14;
-  cols.forEach((c, i) => {
-    doc.text(c, x, y);
-    x += widths[i];
-  });
-  doc.setFont('helvetica', 'normal');
-  y += 6;
-
-  // Rows – max product name characters differ based on whether price cols are shown
-  // (37 chars with price cols, 48 without, both avoiding overflow in 8pt font)
-  const MAX_NOME_COM_PRECO    = 37;
-  const MAX_NOME_SEM_PRECO    = 48;
   let totalValor = 0;
-  itensSelecionados.forEach((item, idx) => {
-    if (y > 275) {
-      doc.addPage();
-      y = 20;
-    }
-    if (idx % 2 === 0) {
-      doc.setFillColor(247, 250, 255);
-      doc.rect(10, y - 4, 190, 7, 'F');
-    }
-    x = 14;
-    const maxNome = temPrecos ? MAX_NOME_COM_PRECO : MAX_NOME_SEM_PRECO;
-    const row = [
+  const trRows = itensSelecionados.map((item, idx) => {
+    const cells = [
       String(idx + 1),
-      item.medicamento.length > maxNome ? item.medicamento.substring(0, maxNome - 2) + '…' : item.medicamento,
+      escHtml(item.medicamento),
       String(item.estoqueAtual),
       item.mediaDiaria.toFixed(2),
       item.projecao.toFixed(1),
-      String(item.comprar),
+      `<strong>${item.comprar}</strong>`,
     ];
     if (temPrecos) {
-      row.push(item.precoUnitario > 0 ? `R$${item.precoUnitario.toFixed(2)}` : '–');
-      row.push(item.valorEstimado > 0 ? `R$${item.valorEstimado.toFixed(2)}` : '–');
-      totalValor += item.valorEstimado || 0;
+      cells.push(item.precoUnitario > 0 ? `R$${item.precoUnitario.toFixed(2)}` : '–');
+      const val = item.valorEstimado > 0 ? item.valorEstimado : 0;
+      cells.push(val > 0 ? `R$${val.toFixed(2)}` : '–');
+      totalValor += val;
     }
-    row.forEach((cell, i) => {
-      if (i === 5) doc.setFont('helvetica', 'bold');
-      doc.text(cell, x, y);
-      doc.setFont('helvetica', 'normal');
-      x += widths[i];
-    });
-    y += 7;
-  });
+    const bg = idx % 2 === 0 ? '' : ' style="background:#f7faff"';
+    return `<tr${bg}>${cells.map((c) => `<td>${c}</td>`).join('')}</tr>`;
+  }).join('');
 
-  // Total row
+  let totalRow = '';
   if (temPrecos && totalValor > 0) {
-    if (y > 280) { doc.addPage(); y = 20; }
-    doc.setFont('helvetica', 'bold');
-    doc.setFillColor(230, 238, 255);
-    doc.rect(10, y - 4, 190, 8, 'F');
-    const totalLabel = `TOTAL ESTIMADO (${itensSelecionados.length} itens):`;
-    doc.text(totalLabel, 14, y);
-    doc.text(`R$${totalValor.toFixed(2)}`, 14 + cols.slice(0, -1).reduce((s, _, i) => s + widths[i], 0), y);
-    doc.setFont('helvetica', 'normal');
-    y += 10;
+    totalRow = `<tr class="total-row"><td colspan="${cols.length - 1}"><strong>TOTAL ESTIMADO (${itensSelecionados.length} itens)</strong></td><td><strong>R$${totalValor.toFixed(2)}</strong></td></tr>`;
   }
 
-  // Footer
-  doc.setFontSize(7);
-  doc.setTextColor(120, 120, 120);
-  doc.text(`Total: ${itensSelecionados.length} item(s) | Período de vendas: ${data.diasVendas} dias`, 14, 290);
+  const colgroup = cols.map((_, i) => `<col style="width:${colWidths[i]}">`).join('');
+  const thCells  = cols.map((h) => `<th>${h}</th>`).join('');
 
-  downloadPdf(doc, `lista-compras-${data.diasCobertura}dias-${hoje.replace(/\//g, '-')}.pdf`);
-  showToast('PDF gerado com sucesso!', 'success');
-  } catch (err) {
-    showToast(`Erro ao gerar PDF: ${err.message}`, 'error');
+  const html = `<!DOCTYPE html>
+<html lang="pt-BR">
+<head><meta charset="UTF-8"/>
+<title>Lista de Compras – ${escHtml(farmacia)}</title>
+<style>
+  body{font-family:Arial,sans-serif;font-size:10px;margin:0;color:#222}
+  .hdr{background:#1a6fc4;color:#fff;padding:10px 14px 8px}
+  .hdr h1{font-size:15px;margin:0 0 2px}
+  .hdr p{font-size:9px;margin:0}
+  .hdr .dt{float:right;font-size:9px}
+  table{width:100%;border-collapse:collapse;margin-top:8px}
+  th,td{border:1px solid #ccc;padding:4px 6px;text-align:left}
+  th{background:#e6eeff;color:#222;font-size:9px}
+  .total-row td{background:#e6eeff;font-weight:bold}
+  .ft{font-size:8px;color:#888;margin-top:8px}
+  .btn{padding:6px 14px;cursor:pointer;font-size:12px;margin-top:10px}
+  @media print{@page{margin:1cm;size:A4} .btn{display:none}}
+</style></head>
+<body>
+<div class="hdr">
+  <span class="dt">Gerado em: ${hoje}</span>
+  <h1>${escHtml(farmacia)}</h1>
+  <p>Sugestão de Compra – Cobertura: ${data.diasCobertura} dias</p>
+</div>
+<table><colgroup>${colgroup}</colgroup>
+<thead><tr>${thCells}</tr></thead>
+<tbody>${trRows}${totalRow}</tbody>
+</table>
+<p class="ft">Total: ${itensSelecionados.length} item(s) | Período de vendas: ${data.diasVendas} dias</p>
+<button class="btn" onclick="window.print()">🖨️ Imprimir / Salvar PDF</button>
+</body></html>`;
+
+  if (_abrirJanelaPdf(html)) {
+    showToast('PDF pronto! Use o botão ou Ctrl+P para salvar.', 'success');
   }
 }
 
@@ -1073,75 +1032,54 @@ function renderRelatorio(data) {
 
 function exportarRelatorioPdf() {
   if (!state.relatorio) return;
-  if (typeof window.jspdf === 'undefined' || typeof window.jspdf.jsPDF === 'undefined') {
-    showToast('Biblioteca de PDF não carregou. Verifique sua conexão e recarregue a página.', 'error');
-    return;
-  }
-  try {
-  const { jsPDF } = window.jspdf;
-  const doc  = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
-  const data = state.relatorio;
+  const data    = state.relatorio;
   const farmacia = CONFIG.FARMACIA_NOME;
-  const hoje = new Date().toLocaleDateString('pt-BR');
-  const label = state.topSelecionado > 0 ? `Top ${state.topSelecionado}` : 'Todos';
+  const hoje    = new Date().toLocaleDateString('pt-BR');
+  const label   = state.topSelecionado > 0 ? `Top ${state.topSelecionado}` : 'Todos';
 
-  // Header
-  doc.setFillColor(26, 111, 196);
-  doc.rect(0, 0, 210, 28, 'F');
-  doc.setTextColor(255, 255, 255);
-  doc.setFontSize(16);
-  doc.setFont('helvetica', 'bold');
-  doc.text(farmacia, 14, 12);
-  doc.setFontSize(10);
-  doc.setFont('helvetica', 'normal');
-  doc.text(`Relatório de Mais Vendidos – ${label} | Período: ${data.diasVendas} dias`, 14, 20);
-  doc.text(`Gerado em: ${hoje}`, 155, 20);
+  const trRows = data.itens.map((item, idx) => {
+    const bg = idx % 2 === 0 ? '' : ' style="background:#f7faff"';
+    return `<tr${bg}>
+      <td>${idx + 1}º</td>
+      <td>${escHtml(item.medicamento)}</td>
+      <td>${item.totalVendido}</td>
+      <td><strong>${item.mediaDiaria.toFixed(2)}/dia</strong></td>
+    </tr>`;
+  }).join('');
 
-  // Table
-  doc.setTextColor(0, 0, 0);
-  doc.setFontSize(8);
-  const cols   = ['#', 'Cód. / Medicamento', 'Total Vendido', 'Média Diária'];
-  const widths = [10, 110, 35, 35];
-  let y = 36;
+  const html = `<!DOCTYPE html>
+<html lang="pt-BR">
+<head><meta charset="UTF-8"/>
+<title>Relatório Mais Vendidos – ${escHtml(farmacia)}</title>
+<style>
+  body{font-family:Arial,sans-serif;font-size:10px;margin:0;color:#222}
+  .hdr{background:#1a6fc4;color:#fff;padding:10px 14px 8px}
+  .hdr h1{font-size:15px;margin:0 0 2px}
+  .hdr p{font-size:9px;margin:0}
+  .hdr .dt{float:right;font-size:9px}
+  table{width:100%;border-collapse:collapse;margin-top:8px}
+  th,td{border:1px solid #ccc;padding:4px 6px;text-align:left}
+  th{background:#e6eeff;color:#222;font-size:9px}
+  .ft{font-size:8px;color:#888;margin-top:8px}
+  .btn{padding:6px 14px;cursor:pointer;font-size:12px;margin-top:10px}
+  @media print{@page{margin:1cm;size:A4} .btn{display:none}}
+</style></head>
+<body>
+<div class="hdr">
+  <span class="dt">Gerado em: ${hoje}</span>
+  <h1>${escHtml(farmacia)}</h1>
+  <p>Relatório de Mais Vendidos – ${escHtml(label)} | Período: ${data.diasVendas} dias</p>
+</div>
+<table>
+<thead><tr><th>#</th><th>Cód. / Medicamento</th><th>Total Vendido</th><th>Média Diária</th></tr></thead>
+<tbody>${trRows}</tbody>
+</table>
+<p class="ft">Total: ${data.totalItens} item(s) | Período de vendas: ${data.diasVendas} dias</p>
+<button class="btn" onclick="window.print()">🖨️ Imprimir / Salvar PDF</button>
+</body></html>`;
 
-  doc.setFont('helvetica', 'bold');
-  doc.setFillColor(230, 238, 255);
-  doc.rect(10, y - 5, 190, 8, 'F');
-  let x = 14;
-  cols.forEach((c, i) => { doc.text(c, x, y); x += widths[i]; });
-  doc.setFont('helvetica', 'normal');
-  y += 6;
-
-  data.itens.forEach((item, idx) => {
-    if (y > 275) { doc.addPage(); y = 20; }
-    if (idx % 2 === 0) {
-      doc.setFillColor(247, 250, 255);
-      doc.rect(10, y - 4, 190, 7, 'F');
-    }
-    x = 14;
-    const row = [
-      String(idx + 1) + 'º',
-      item.medicamento.length > 60 ? item.medicamento.substring(0, 58) + '…' : item.medicamento,
-      String(item.totalVendido),
-      item.mediaDiaria.toFixed(2) + '/dia',
-    ];
-    row.forEach((cell, i) => {
-      if (i === 3) doc.setFont('helvetica', 'bold');
-      doc.text(cell, x, y);
-      doc.setFont('helvetica', 'normal');
-      x += widths[i];
-    });
-    y += 7;
-  });
-
-  doc.setFontSize(7);
-  doc.setTextColor(120, 120, 120);
-  doc.text(`Total: ${data.totalItens} item(s) | Período de vendas: ${data.diasVendas} dias`, 14, 290);
-
-  downloadPdf(doc, `relatorio-mais-vendidos-${label.toLowerCase().replace(/ /g, '')}-${hoje.replace(/\//g, '-')}.pdf`);
-  showToast('PDF do relatório gerado!', 'success');
-  } catch (err) {
-    showToast(`Erro ao gerar PDF: ${err.message}`, 'error');
+  if (_abrirJanelaPdf(html)) {
+    showToast('PDF do relatório pronto! Use o botão ou Ctrl+P para salvar.', 'success');
   }
 }
 
