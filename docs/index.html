@@ -5,18 +5,27 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>EstoqueFarmácia – Lista de Compras</title>
   <link rel="stylesheet" href="css/style.css">
+  <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" href="icons/icon-512.png">
+  <meta name="theme-color" content="#16a05a">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Estoque">
 </head>
 <body>
 
 <!-- ─── Header ──────────────────────────────────────────────────────────── -->
 <header>
-  <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-       stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-    <rect x="3" y="3" width="18" height="18" rx="2"/><path d="M12 8v8M8 12h8"/>
-  </svg>
-  <div>
-    <h1>EstoqueFarmácia</h1>
-    <p>Gerador de lista de compras com base em estoque e histórico de vendas</p>
+  <img src="img/header-banner.png" alt="EstoqueFarmácia" class="header-banner" onerror="this.style.display='none'">
+  <div class="header-inner">
+    <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="3" y="3" width="18" height="18" rx="2"/><path d="M12 8v8M8 12h8"/>
+    </svg>
+    <div>
+      <h1>EstoqueFarmácia</h1>
+      <p>Gerador de lista de compras com base em estoque e histórico de vendas</p>
+    </div>
   </div>
 </header>
 
@@ -272,11 +281,6 @@
 <div id="toast"></div>
 
 <!-- ─── Scripts ──────────────────────────────────────────────────────────── -->
-<!-- jsPDF for PDF generation -->
-<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"
-        integrity="sha384-OLBgp1GsljhM2TJ+sbHjaiH9txEUvgdDTAzHv2P24donTt6/529l+9Ua0vFImLlb"
-        crossorigin="anonymous"></script>
-
 <!-- SheetJS for XLS/XLSX parsing -->
 <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
 
@@ -284,5 +288,11 @@
 <script src="js/config.js"></script>
 <!-- App logic -->
 <script src="js/app.js"></script>
+<script>
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('sw.js')
+      .catch(function(err){ console.warn('SW registration failed:', err); });
+  }
+</script>
 </body>
 </html>
