@@ -839,6 +839,7 @@ function _abrirJanelaPdf(html) {
   win.document.write(html);
   win.document.close();
   win.focus();
+  // Give the browser time to render the document before opening the print dialog
   setTimeout(() => win.print(), 400);
   return true;
 }

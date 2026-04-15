@@ -290,8 +290,10 @@
 <script src="js/app.js"></script>
 <script>
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('sw.js')
-      .catch(function(err){ console.warn('SW registration failed:', err); });
+    window.addEventListener('load', function () {
+      navigator.serviceWorker.register('sw.js')
+        .catch(function(err){ console.warn('SW registration failed:', err); });
+    });
   }
 </script>
 </body>

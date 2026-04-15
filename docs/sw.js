@@ -40,7 +40,7 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
-// ── Fetch – Cache-first with network fallback ──────────────────────────────────
+// ── Fetch – Cache-first with network fetch on miss ────────────────────────────
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
   const url = new URL(event.request.url);
